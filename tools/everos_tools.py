@@ -201,6 +201,9 @@ class EverOSRecallTool:
 
     @property
     def parameters(self) -> dict:
+        user_id_desc = "用户标识（可选）：留空=只查当前说话人；也可传具体 user_id"
+        if self._config.get("allow_query_all_memories", False):
+            user_id_desc += "；传星号（*）=查所有用户的记忆"
         return {
             "type": "object",
             "properties": {
@@ -210,8 +213,7 @@ class EverOSRecallTool:
                 },
                 "user_id": {
                     "type": "string",
-                    "description": "用户标识（可选）：留空=只查当前说话人；"
-                                   "传 \"*\" =查所有用户的记忆；也可传具体 user_id",
+                    "description": user_id_desc,
                 },
                 "persona_name": {
                     "type": "string",
@@ -232,6 +234,11 @@ class EverOSRecallTool:
 
         # 目标列表由插件构造；AstrBot 把当前事件作为第一个参数传入。
         if user_id == "*":
+            if not self._config.get("allow_query_all_memories", False):
+                return (
+                    "🔍 全量查询未启用（allow_query_all_memories=false），"
+                    "只能查询当前说话人的记忆。"
+                )
             targets = discover_user_targets(self._config.everos_data_dir, app_id)
             scope = f"全部用户（{len(targets)} 个）"
         else:

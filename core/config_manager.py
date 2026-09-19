@@ -7,6 +7,9 @@ from typing import Any
 _DEFAULTS: dict[str, Any] = {
     "everos_base_url": "http://127.0.0.1:8000",
     "enable_tools": True,
+    # 是否允许 LLM 工具 everos_recall 用 user_id="*" 查询所有用户的记忆。
+    # 关闭时工具描述里不会暴露 "*"，模型也无法触发全量查询。
+    "allow_query_all_memories": False,
     "enable_webui": True,
     "app_id": "astrbot",
     "project_id": "default",

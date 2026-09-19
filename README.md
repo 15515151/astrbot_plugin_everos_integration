@@ -104,6 +104,7 @@ AstrBot 后台 → 插件配置：
 | `everos_base_url` | `http://127.0.0.1:8000` | EverOS 地址 |
 | `everos_data_dir` | `/opt/EverOS/everos-data` | EverOS 记忆根目录（宿主机路径） |
 | `enable_tools` | `true` | 注册 LLM 工具 |
+| `allow_query_all_memories` | `false` | 允许 Agent 用 `everos_recall` 查询所有用户；关闭时工具描述里不会暴露该选项 |
 | `enable_webui` | `true` | AstrBot 内嵌面板 |
 | `standalone_webui_enabled` | `true` | 独立 WebUI |
 | `standalone_webui_host` | `0.0.0.0` | 监听地址 |
@@ -143,7 +144,7 @@ AstrBot 后台 → 插件配置：
 
 - `everos_memorize` — 记录用户偏好 / 事实 / 关键信息
 - `everos_learn` — 记录 Agent 自己的工作规范 / 经验（进入 Agent Track，提炼为 Case / Skill）
-- `everos_recall` — 检索记忆。`user_id` 留空=只查当前说话人；传 `"*"`=查所有用户；也可传具体 `user_id`
+- `everos_recall` — 检索记忆。`user_id` 留空=只查当前说话人；传星号=查所有用户（需开启 `allow_query_all_memories`）；也可传具体 `user_id`
 
 ### 自动对话记忆
 

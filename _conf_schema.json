@@ -11,6 +11,12 @@
     "type": "bool",
     "default": true
   },
+  "allow_query_all_memories": {
+    "description": "允许 Agent 查询所有用户的记忆",
+    "hint": "开启后 everos_recall 支持 user_id 传星号（*）查询所有用户；关闭时模型无法触发全量查询，只能查当前说话人。",
+    "type": "bool",
+    "default": false
+  },
   "enable_webui": {
     "description": "启用插件内嵌 WebUI",
     "hint": "在 AstrBot 后台提供 /everos 管理界面",
