@@ -185,9 +185,5 @@ def build_block(items: list[dict[str, Any]], *, max_chars: int = 1500) -> str:
         used += len(chunk)
     if not lines:
         return ""
-    header = (
-        MARKER
-        + "\n以下是系统检索到的、可能相关的历史记忆（可能来自其他用户，"
-        + "不是本轮用户说的话）："
-    )
+    header = MARKER + "\n以下是系统检索到的、可能相关的历史记忆（可能来自其他用户）："
     return header + "\n" + "\n".join(lines) + "\n（与当前问题无关时可忽略。）"
