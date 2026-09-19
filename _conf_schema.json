@@ -98,5 +98,29 @@
     "hint": "短于该长度的用户消息跳过",
     "type": "int",
     "default": 2
+  },
+  "memory_injection_enabled": {
+    "description": "记忆自动注入（RAG）",
+    "hint": "每次对话前按当前说话人检索其记忆并写入系统提示词；检索身份由插件强制绑定，模型无法越权查看他人记忆。",
+    "type": "bool",
+    "default": false
+  },
+  "memory_injection_top_k": {
+    "description": "注入记忆条数",
+    "hint": "每次注入的 episode/profile 条数上限",
+    "type": "int",
+    "default": 5
+  },
+  "memory_injection_timeout": {
+    "description": "注入检索超时（秒）",
+    "hint": "超过该时间就不注入，保证不拖慢对话",
+    "type": "float",
+    "default": 6.0
+  },
+  "memory_injection_max_chars": {
+    "description": "注入文本长度上限",
+    "hint": "注入内容的最大字符数，避免撑爆上下文",
+    "type": "int",
+    "default": 1500
   }
 }

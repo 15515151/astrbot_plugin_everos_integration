@@ -28,6 +28,13 @@ _DEFAULTS: dict[str, Any] = {
     "auto_capture_idle_flush_seconds": 300,
     "auto_capture_max_pending": 80,
     "auto_capture_min_chars": 2,
+    # ── 记忆自动注入（RAG）────────────────────────────────────
+    # 每次 LLM 请求前，按当前说话人(event.get_sender_id())检索其记忆，
+    # 追加到 system prompt。检索身份由插件强制绑定，模型无法越权。
+    "memory_injection_enabled": False,
+    "memory_injection_top_k": 5,
+    "memory_injection_timeout": 6.0,
+    "memory_injection_max_chars": 1500,
 }
 
 

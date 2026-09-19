@@ -11,6 +11,7 @@
 | 🔌 **服务桥接** | 通过 HTTP API 连接独立部署的 EverOS |
 | 🔧 **LLM 工具** | `everos_memorize`（用户记忆）/ `everos_learn`（Agent 技能）/ `everos_recall`（检索） |
 | 💬 **自动对话记忆** | 每轮对话自动写入 EverOS，由边界检测抽取；空闲或超限自动提炼 |
+| 🧠 **记忆自动注入** | 每次对话前按当前说话人检索其记忆并注入提示词，无需模型调用工具；**严格按人隔离** |
 | 📥 **待提炼视图** | Dashboard 查看缓冲区中尚未提炼的消息全文，支持一键提炼 |
 | 📊 **WebUI 管理面板** | 状态 / 记忆仓库 / 待提炼 / 检索 / 技能库 / 系统 / 设置 |
 | 🌐 **独立 WebUI** | 安装即启动，浏览器访问 `http://<IP>:18766/` |
@@ -117,6 +118,10 @@ AstrBot 后台 → 插件配置：
 | `auto_capture_idle_flush_seconds` | `300` | 空闲多久自动提炼，0=关闭 |
 | `auto_capture_max_pending` | `80` | 单会话待提炼条数上限，0=关闭 |
 | `auto_capture_min_chars` | `2` | 短于该长度的消息跳过 |
+| `memory_injection_enabled` | `false` | 记忆自动注入（RAG） |
+| `memory_injection_top_k` | `5` | 每次注入的 episode/profile 条数上限 |
+| `memory_injection_timeout` | `6.0` | 注入检索超时（秒），超时就不注入 |
+| `memory_injection_max_chars` | `1500` | 注入文本长度上限，避免撑爆上下文 |
 
 ---
 
@@ -148,6 +153,15 @@ AstrBot 后台 → 插件配置：
 3. 后台每 30 秒扫描缓冲区：**空闲超过 `auto_capture_idle_flush_seconds`** 或 **单会话超过 `auto_capture_max_pending` 条** 时自动提炼。
 
 > 工具轨（`everos_memorize` / `everos_learn`）每次写入后立即提炼，所以缓冲区通常为空；对话轨产生的待提炼消息，可以在 WebUI 的 **待提炼** 标签页查看全文并一键提炼。
+
+### 记忆自动注入（RAG）
+
+开启后，`on_llm_request` 钩子会在每次请求 LLM 之前，用**当前说话人的 `sender_id`** 检索其记忆（hybrid），并把结果追加到 system prompt。这样模型每轮都自带该用户的背景，不必自己调用 `everos_recall`。
+
+- **检索身份由插件强制绑定**（`event.get_sender_id()`），不接受模型提供的 id —— 一个用户无法通过该通道看到别人的记忆；
+- 检索失败或超时（默认 6 秒）会**静默跳过**，不影响对话；
+- 注入内容上限默认 1500 字符，避免撑爆上下文；
+- 会带来一次检索（embedding + BM25）的延迟，可按需调 `memory_injection_timeout` 或关闭。
 
 ### WebUI
 

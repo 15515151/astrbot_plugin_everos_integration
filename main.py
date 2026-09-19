@@ -21,7 +21,7 @@ from typing import Any
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.event.filter import PermissionType, permission_type
-from astrbot.api.provider import LLMResponse
+from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
 from quart import jsonify, request
 
@@ -36,6 +36,7 @@ from .core.memory_reader import (
     list_buffered_messages,
     list_buffered_sessions,
 )
+from .core.memory_injection import MARKER, build_block, fetch_memories
 from .core.memory_reader import search as read_search
 from .core.standalone_server import StandaloneServer
 from .tools.everos_tools import EverOSLearnTool, EverOSMemorizeTool, EverOSRecallTool
@@ -496,6 +497,48 @@ class EverOSIntegrationPlugin(Star):
             logger.info("🔧 LLM 工具已注册: everos_learn, everos_memorize, everos_recall")
         except Exception as e:
             logger.error(f"LLM 工具注册失败: {e}", exc_info=True)
+
+    # ─── 记忆自动注入（RAG）──────────────────────────────────────────
+
+    @filter.on_llm_request()
+    async def on_llm_request(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ) -> None:
+        """每次 LLM 请求前，按当前说话人检索其记忆并注入 system prompt。
+
+        检索身份强制用 event.get_sender_id()，不由模型提供，因此一个用户
+        不可能通过这个通道看到别人的记忆。失败/超时一律静默跳过。
+        """
+        if not self.config.get("memory_injection_enabled", False):
+            return
+        if self._client is None:
+            return
+        if MARKER in (getattr(req, "system_prompt", "") or ""):
+            return
+        sender_id = event.get_sender_id()
+        if not sender_id:
+            return
+        try:
+            items = await fetch_memories(
+                self.config.everos_base_url,
+                user_id=sender_id,
+                app_id=self.config.app_id,
+                project_id=self.config.project_id,
+                query=event.get_message_str() or "",
+                top_k=int(self.config.get("memory_injection_top_k", 5)),
+                timeout=float(self.config.get("memory_injection_timeout", 6.0)),
+            )
+            block = build_block(
+                items,
+                max_chars=int(self.config.get("memory_injection_max_chars", 1500)),
+            )
+            if not block:
+                return
+            base = getattr(req, "system_prompt", "") or ""
+            req.system_prompt = (base + "\n" + block) if base else block
+            logger.debug(f"[EverOS] memory injection: {len(items)} for {sender_id}")
+        except Exception as e:
+            logger.debug(f"[EverOS] memory injection skipped: {e}")
 
     # ─── 自动对话记忆（对话轨）────────────────────────────────────────
 
