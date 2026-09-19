@@ -119,6 +119,7 @@ AstrBot 后台 → 插件配置：
 | `auto_capture_max_pending` | `80` | 单会话待提炼条数上限，0=关闭 |
 | `auto_capture_min_chars` | `2` | 短于该长度的消息跳过 |
 | `memory_injection_enabled` | `false` | 记忆自动注入（RAG） |
+| `memory_injection_scope` | `self` | `self`=只搜当前说话人；`all`=还搜索所有用户（AI 可引用别人的记忆） |
 | `memory_injection_top_k` | `5` | 每次注入的 episode/profile 条数上限 |
 | `memory_injection_timeout` | `6.0` | 注入检索超时（秒），超时就不注入 |
 | `memory_injection_max_chars` | `1500` | 注入文本长度上限，避免撑爆上下文 |
@@ -156,12 +157,19 @@ AstrBot 后台 → 插件配置：
 
 ### 记忆自动注入（RAG）
 
-开启后，`on_llm_request` 钩子会在每次请求 LLM 之前，用**当前说话人的 `sender_id`** 检索其记忆（hybrid），并把结果追加到 system prompt。这样模型每轮都自带该用户的背景，不必自己调用 `everos_recall`。
+开启后，`on_llm_request` 钩子会在每次请求 LLM 之前检索记忆（hybrid）并追加到 system prompt，模型每轮都自带背景，不必自己调用 `everos_recall`。
 
-- **检索身份由插件强制绑定**（`event.get_sender_id()`），不接受模型提供的 id —— 一个用户无法通过该通道看到别人的记忆；
+检索范围由 `memory_injection_scope` 控制：
+
+- `self`（默认）：只搜当前说话人的记忆（**按人隔离**）；
+- `all`：额外搜索本应用空间内的所有用户，**AI 可以在对话中引用别人的记忆**（适合"共享助手"场景）。目标列表由插件从记忆根目录自动发现，不接受模型提供的 id。
+
+其他：
+
 - 检索失败或超时（默认 6 秒）会**静默跳过**，不影响对话；
 - 注入内容上限默认 1500 字符，避免撑爆上下文；
-- 会带来一次检索（embedding + BM25）的延迟，可按需调 `memory_injection_timeout` 或关闭。
+- 每条记忆会标注来源（如 `[episode/2130727376]`），方便模型区分是谁的；
+- `all` 会为每个用户各发一次检索（并发 8、最多 30 人），会有额外延迟。
 
 ### WebUI
 

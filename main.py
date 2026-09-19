@@ -36,7 +36,12 @@ from .core.memory_reader import (
     list_buffered_messages,
     list_buffered_sessions,
 )
-from .core.memory_injection import MARKER, build_block, fetch_memories
+from .core.memory_injection import (
+    MARKER,
+    build_block,
+    discover_user_targets,
+    fetch_memories,
+)
 from .core.memory_reader import search as read_search
 from .core.standalone_server import StandaloneServer
 from .tools.everos_tools import EverOSLearnTool, EverOSMemorizeTool, EverOSRecallTool
@@ -504,10 +509,11 @@ class EverOSIntegrationPlugin(Star):
     async def on_llm_request(
         self, event: AstrMessageEvent, req: ProviderRequest
     ) -> None:
-        """每次 LLM 请求前，按当前说话人检索其记忆并注入 system prompt。
+        """每次 LLM 请求前，检索记忆并注入 system prompt。
 
-        检索身份强制用 event.get_sender_id()，不由模型提供，因此一个用户
-        不可能通过这个通道看到别人的记忆。失败/超时一律静默跳过。
+        目标列表由插件自己构造：默认只搜当前说话人；配置
+        memory_injection_scope=all 时会额外搜索本应用空间内的所有用户，
+        因此 AI 也能在对话中引用别人的记忆。失败/超时静默跳过。
         """
         if not self.config.get("memory_injection_enabled", False):
             return
@@ -518,12 +524,15 @@ class EverOSIntegrationPlugin(Star):
         sender_id = event.get_sender_id()
         if not sender_id:
             return
+        app_id = self.config.app_id
+        project_id = self.config.project_id
+        targets = [(app_id, project_id, sender_id)]
+        if str(self.config.get("memory_injection_scope", "self")).lower() == "all":
+            targets += discover_user_targets(self.config.everos_data_dir, app_id)
         try:
             items = await fetch_memories(
                 self.config.everos_base_url,
-                user_id=sender_id,
-                app_id=self.config.app_id,
-                project_id=self.config.project_id,
+                targets,
                 query=event.get_message_str() or "",
                 top_k=int(self.config.get("memory_injection_top_k", 5)),
                 timeout=float(self.config.get("memory_injection_timeout", 6.0)),

@@ -105,6 +105,12 @@
     "type": "bool",
     "default": false
   },
+  "memory_injection_scope": {
+    "description": "注入检索范围",
+    "hint": "self=只搜当前说话人的记忆（按人隔离）；all=还搜索本应用空间内所有用户，AI 也能引用别人的记忆",
+    "type": "string",
+    "default": "self"
+  },
   "memory_injection_top_k": {
     "description": "注入记忆条数",
     "hint": "每次注入的 episode/profile 条数上限",
