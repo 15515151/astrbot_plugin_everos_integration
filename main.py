@@ -75,7 +75,7 @@ def _normalize_item(item: dict, mtype: str = "episode") -> dict:
     "白芷 & Masumeiki",
     "为 AstrBot 集成 EverOS 自进化记忆引擎，让 Agent 拥有长期记忆与自我学习能力",
     "1.1.0",
-    "https://github.com/Masumeiki/astrbot_plugin_everos_integration",
+    "https://github.com/15515151/astrbot_plugin_everos_integration",
 )
 class EverOSIntegrationPlugin(Star):
     """EverOS Integration 插件主类。"""
