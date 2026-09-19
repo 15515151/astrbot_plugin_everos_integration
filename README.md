@@ -143,7 +143,7 @@ AstrBot 后台 → 插件配置：
 
 - `everos_memorize` — 记录用户偏好 / 事实 / 关键信息
 - `everos_learn` — 记录 Agent 自己的工作规范 / 经验（进入 Agent Track，提炼为 Case / Skill）
-- `everos_recall` — 检索相关记忆
+- `everos_recall` — 检索记忆。`user_id` 留空=只查当前说话人；传 `"*"`=查所有用户；也可传具体 `user_id`
 
 ### 自动对话记忆
 

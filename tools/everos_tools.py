@@ -6,6 +6,11 @@ import time
 
 from ..core.config_manager import ConfigManager
 from ..core.everos_client import EverOSClient
+from ..core.memory_injection import (
+    discover_user_targets,
+    fetch_memories,
+    item_text,
+)
 
 
 class EverOSMemorizeTool:
@@ -205,7 +210,8 @@ class EverOSRecallTool:
                 },
                 "user_id": {
                     "type": "string",
-                    "description": "用户标识（可选）",
+                    "description": "用户标识（可选）：留空=只查当前说话人；"
+                                   "传 \"*\" =查所有用户的记忆；也可传具体 user_id",
                 },
                 "persona_name": {
                     "type": "string",
@@ -219,49 +225,54 @@ class EverOSRecallTool:
     async def __call__(self, *args, query: str = "", user_id: str = "", persona_name: str = "") -> str:
         app_id = self._config.get_app_id_for(persona_name or None)
         project_id = self._config.project_id
-        # EverOS API 要求 user_id 至少 1 个字符
-        resolved_user_id = user_id or persona_name or "default"
+        query = (query or "").strip()
+        if not query:
+            return "🔍 查询词为空。"
+        user_id = (user_id or "").strip()
+
+        # 目标列表由插件构造；AstrBot 把当前事件作为第一个参数传入。
+        if user_id == "*":
+            targets = discover_user_targets(self._config.everos_data_dir, app_id)
+            scope = f"全部用户（{len(targets)} 个）"
+        else:
+            event = args[0] if args else None
+            sender_id = ""
+            getter = getattr(event, "get_sender_id", None)
+            if callable(getter):
+                try:
+                    sender_id = str(getter() or "")
+                except Exception:
+                    sender_id = ""
+            resolved = user_id or persona_name or sender_id or "default"
+            targets = [(app_id, project_id, resolved)]
+            if resolved != "default":
+                # 兼容历史上写入共享 default 空间的记忆
+                targets.append((app_id, project_id, "default"))
+            scope = resolved
 
         try:
-            # 同时搜多个 user_id，覆盖不同来源的存储
-            candidate_uids = [resolved_user_id, "default"]
-            memories = []
-            seen_contents = set()
-            for uid in candidate_uids:
-                try:
-                    result = await self._client.memory_search(
-                        query=query,
-                        user_id=uid,
-                        app_id=app_id,
-                        project_id=project_id,
-                        top_k=5,
-                    )
-                    raw_data = result.get("data", {}) if isinstance(result, dict) else {}
-                    for category in ("episodes", "profiles", "agent_cases", "agent_skills", "memories"):
-                        items = raw_data.get(category, [])
-                        if items:
-                            for item in items:
-                                if isinstance(item, dict):
-                                    item["_category"] = category
-                                    cid = item.get("id", item.get("content", ""))
-                                    if cid and str(cid) not in seen_contents:
-                                        seen_contents.add(str(cid))
-                                        memories.append(item)
-                except Exception:
-                    continue
-            if not memories:
-                return "🔍 未在 EverOS 中找到相关记忆。"
-            lines = ["📚 **EverOS 记忆检索结果：**", ""]
-            for i, mem in enumerate(memories, 1):
-                content = mem.get("content", mem.get("text", str(mem)))
-                score = mem.get("score", mem.get("relevance", ""))
-                track = mem.get("_track", "")
-                mtype = mem.get("_type", mem.get("memory_type", "memory"))
-                tag = f"[{track}/{mtype}]" if track else f"[{mtype}]"
-                if score:
-                    lines.append(f"{i}. {tag} [{score:.2f}] {content}")
-                else:
-                    lines.append(f"{i}. {tag} {content}")
-            return "\n".join(lines)
+            items = await fetch_memories(
+                self._config.everos_base_url,
+                targets,
+                query=query,
+                top_k=8,
+                timeout=15.0,
+            )
         except Exception as e:
             return f"❌ EverOS 检索失败：{e}"
+
+        if not items:
+            return f"🔍 未在 EverOS 中找到相关记忆（范围：{scope}）。"
+
+        lines = [f"📚 **EverOS 记忆检索结果**（范围：{scope}）：", ""]
+        for i, mem in enumerate(items, 1):
+            content = item_text(mem) or str(mem)
+            mtype = mem.get("memory_type", "memory")
+            owner = mem.get("user_id") or mem.get("agent_id") or ""
+            tag = f"[{mtype}/{owner}]" if owner else f"[{mtype}]"
+            score = mem.get("score")
+            if isinstance(score, (int, float)):
+                lines.append(f"{i}. {tag} [{score:.2f}] {content}")
+            else:
+                lines.append(f"{i}. {tag} {content}")
+        return "\n".join(lines)

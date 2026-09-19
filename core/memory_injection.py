@@ -142,7 +142,7 @@ async def fetch_memories(
     return results[:top_k]
 
 
-def _item_text(item: dict[str, Any]) -> str:
+def item_text(item: dict[str, Any]) -> str:
     for key in ("episode", "summary", "content"):
         value = item.get(key)
         if isinstance(value, str) and value.strip():
@@ -166,7 +166,7 @@ def build_block(items: list[dict[str, Any]], *, max_chars: int = 1500) -> str:
     seen: set[str] = set()
     used = 0
     for item in items:
-        text = _item_text(item)
+        text = item_text(item)
         if not text:
             continue
         key = text[:80]

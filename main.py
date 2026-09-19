@@ -703,7 +703,7 @@ class EverOSIntegrationPlugin(Star):
             return
 
         tool = EverOSRecallTool(self._client, self.config)
-        result = await tool(query=query)
+        result = await tool(event, query=query)
         yield event.plain_result(result)
 
     @permission_type(PermissionType.ADMIN)
