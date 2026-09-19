@@ -48,6 +48,11 @@
       <span>记忆仓库</span>
       <span class="tab__count" id="tab-count-memories"></span>
     </button>
+    <button class="tab" data-tab="pending">
+      <span class="tab__icon">◷</span>
+      <span>待提炼</span>
+      <span class="tab__count" id="tab-count-pending"></span>
+    </button>
     <button class="tab" data-tab="search">
       <span class="tab__icon">◎</span>
       <span>检索</span>
@@ -233,6 +238,23 @@
 
   </section>
 
+  <!-- ── 待提炼 ── -->
+  <section class="tab-panel" data-panel="pending">
+    <div class="panel-header">
+      <h2 class="panel-title">待提炼消息</h2>
+      <div class="panel-actions">
+        <button class="btn btn--sm btn--ghost" id="pending-refresh">
+          <span class="btn__icon">↻</span> 刷新
+        </button>
+        <button class="btn btn--sm btn--primary" id="pending-flush-all">全部提炼</button>
+      </div>
+    </div>
+    <p class="panel-meta" id="pending-meta">EverOS 缓冲区里已写入、尚未提炼的消息</p>
+    <div class="mem-list" id="pending-list">
+      <p class="empty-state">加载中...</p>
+    </div>
+  </section>
+
   <!-- ── 检索 ── -->
   <section class="tab-panel" data-panel="search">
     <div class="panel-header">
@@ -315,7 +337,7 @@
     <div class="settings-form" id="settings-form">
       <div class="form-group">
         <label>EverOS 服务地址</label>
-        <input id="set-url" class="input" type="text" placeholder="http://127.0.0.1:8765" />
+        <input id="set-url" class="input" type="text" placeholder="http://127.0.0.1:8000" />
       </div>
       <div class="form-row">
         <div class="form-group">

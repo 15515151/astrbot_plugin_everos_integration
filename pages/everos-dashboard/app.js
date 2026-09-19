@@ -668,6 +668,126 @@ function setupSettings() {
   });
 }
 
+// ═══ 待提炼消息（缓冲区）══════════════════════════════════════════
+
+function renderPending(sessions, messages) {
+  const el = $('pending-list');
+  if (!el) return;
+  const meta = $('pending-meta');
+  const badge = $('tab-count-pending');
+
+  if (!sessions || !sessions.length) {
+    if (badge) badge.textContent = '';
+    if (meta) meta.textContent = '缓冲区为空';
+    el.innerHTML = '<p class="empty-state">缓冲区为空 —— 没有待提炼的消息<br>' +
+      '<span class="text-muted">（插件每次写入都会立即提炼；开启自动对话记忆后，攒下的消息会出现在这里）</span></p>';
+    return;
+  }
+
+  if (badge) badge.textContent = String(sessions.length);
+  if (meta) meta.textContent = sessions.length + ' 个会话 · ' + (messages || []).length + ' 条消息';
+
+  const bySession = {};
+  (messages || []).forEach(function(m) {
+    if (!bySession[m.session_id]) bySession[m.session_id] = [];
+    bySession[m.session_id].push(m);
+  });
+
+  el.innerHTML = '';
+  sessions.forEach(function(s) {
+    const msgs = bySession[s.session_id] || [];
+    let rows = '';
+    msgs.forEach(function(m) {
+      rows += '<div class="pending-msg">' +
+        '<div class="pending-msg__head">' +
+          '<span class="pending-msg__role ' + escape(m.role || '') + '">' + escape(m.role || '') + '</span>' +
+          '<span class="pending-msg__sender">' + escape(m.sender_id || '') + '</span>' +
+          '<span class="pending-msg__time">' + fmtTime(m.timestamp) + '</span>' +
+        '</div>' +
+        '<div class="pending-msg__text">' + escape(m.text || '') + '</div>' +
+      '</div>';
+    });
+    if (!rows) {
+      rows = '<div class="pending-msg__text text-muted">（该会话暂无消息正文）</div>';
+    }
+
+    const card = document.createElement('div');
+    card.className = 'mem-item pending-item';
+    card.innerHTML =
+      '<div class="mem-item__main">' +
+        '<div class="mem-item__head">' +
+          '<span class="mem-item__type episode">' + escape(s.session_id) + '</span>' +
+          '<span class="mem-item__time">' + (s.pending || 0) + ' 条 · ' + fmtTime(s.last_updated) + '</span>' +
+        '</div>' +
+        '<div class="pending-msgs">' + rows + '</div>' +
+      '</div>' +
+      '<div class="pending-item__actions">' +
+        '<button class="btn btn--sm btn--primary pending-flush">立即提炼</button>' +
+      '</div>';
+
+    const btn = card.querySelector('.pending-flush');
+    btn.addEventListener('click', async function() {
+      btn.disabled = true;
+      btn.textContent = '提炼中…';
+      try {
+        const r = await API.post('flush', { session_id: s.session_id });
+        const p = (r && r.data) ? r.data : (r || {});
+        toast('会话提炼完成：' + (p.status || 'ok'), 'success');
+        await loadPending();
+        await loadMemories(currentFilter);
+        await loadOverview();
+      } catch (e) {
+        toast('提炼失败: ' + e.message, 'error');
+        btn.disabled = false;
+        btn.textContent = '立即提炼';
+      }
+    });
+    el.appendChild(card);
+  });
+}
+
+async function loadPending() {
+  const el = $('pending-list');
+  if (!el) return;
+  el.innerHTML = '<div class="skeleton skeleton--block" style="margin-bottom:8px"></div>'.repeat(3);
+  try {
+    const data = await API.get('pending');
+    const payload = (data && data.data) ? data.data : (data || {});
+    renderPending(payload.sessions || [], payload.messages || []);
+  } catch (e) {
+    el.innerHTML = '<p class="empty-state">加载失败: ' + escape(e.message) + '</p>';
+  }
+}
+
+function setupPending() {
+  const refresh = $('pending-refresh');
+  if (refresh) refresh.addEventListener('click', loadPending);
+
+  const flushAll = $('pending-flush-all');
+  if (flushAll) {
+    flushAll.addEventListener('click', async function() {
+      flushAll.disabled = true;
+      flushAll.textContent = '提炼中…';
+      try {
+        const r = await API.post('flush', {});
+        const p = (r && r.data) ? r.data : (r || {});
+        if (p.status === 'no_pending') {
+          toast('缓冲区为空，没有待提炼的消息', 'success');
+        } else {
+          toast('已提炼 ' + (p.flushed || 0) + ' 个会话', 'success');
+        }
+        await loadPending();
+        await loadMemories(currentFilter);
+        await loadOverview();
+      } catch (e) {
+        toast('提炼失败: ' + e.message, 'error');
+      }
+      flushAll.disabled = false;
+      flushAll.textContent = '全部提炼';
+    });
+  }
+}
+
 // ═══ 标签切换 ──────────────────────────────────────────────────
 
 function setupTabs() {
@@ -681,6 +801,7 @@ function setupTabs() {
 
       switch (tab.dataset.tab) {
         case 'memories': if (!$('mem-list').querySelector('.mem-item')) loadMemories(currentFilter); break;
+        case 'pending': loadPending(); break;
         case 'skills': loadSkills(); break;
       }
     });
@@ -745,6 +866,7 @@ async function init() {
   // 初始化各模块
   setupTabs();
   setupMemories();
+  setupPending();
   setupSettings();
   setupQuickActions();
 

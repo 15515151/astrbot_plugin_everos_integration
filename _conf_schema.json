@@ -1,9 +1,9 @@
 {
   "everos_base_url": {
     "description": "EverOS 服务地址",
-    "hint": "独立容器部署的默认地址为 http://127.0.0.1:8765",
+    "hint": "EverOS 服务地址，默认 http://127.0.0.1:8000",
     "type": "string",
-    "default": "http://127.0.0.1:8765"
+    "default": "http://127.0.0.1:8000"
   },
   "enable_tools": {
     "description": "启用 LLM 工具",

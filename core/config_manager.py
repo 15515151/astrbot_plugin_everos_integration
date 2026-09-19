@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 _DEFAULTS: dict[str, Any] = {
-    "everos_base_url": "http://127.0.0.1:8765",
+    "everos_base_url": "http://127.0.0.1:8000",
     "enable_tools": True,
     "enable_webui": True,
     "app_id": "astrbot",

@@ -23,7 +23,14 @@ try:
     from fastapi.middleware.cors import CORSMiddleware
     import httpx
 
-    from .memory_reader import count_by_type, fetch_all, flush_buffered, flush_session
+    from .memory_reader import (
+        count_by_type,
+        fetch_all,
+        flush_buffered,
+        flush_session,
+        list_buffered_messages,
+        list_buffered_sessions,
+    )
     from .memory_reader import search as read_search
 
     FASTAPI_AVAILABLE = True
@@ -76,7 +83,7 @@ class StandaloneServer:
 
     def _get_everos_url(self) -> str:
         """从插件配置获取 EverOS 后端地址。"""
-        return self.config.get("everos_base_url", "http://127.0.0.1:8765")
+        return self.config.get("everos_base_url", "http://127.0.0.1:8000")
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
@@ -251,6 +258,25 @@ class StandaloneServer:
                 return {"ok": True, "data": {"items": all_items}}
             except Exception as e:
                 return {"ok": False, "error": str(e), "data": {"items": []}}
+
+        @self.app.get("/api/everos/pending")
+        async def api_pending():
+            """列出 EverOS 缓冲区（待提炼）里的会话与消息全文。"""
+            data_dir = self.config.get("everos_data_dir", "")
+            app_id = self.config.get("app_id", "astrbot")
+            try:
+                sessions = list_buffered_sessions(data_dir, app_id=app_id)
+                messages = list_buffered_messages(data_dir, app_id=app_id)
+                return {
+                    "ok": True,
+                    "data": {"sessions": sessions, "messages": messages},
+                }
+            except Exception as e:
+                return {
+                    "ok": False,
+                    "error": str(e),
+                    "data": {"sessions": [], "messages": []},
+                }
 
         @self.app.post("/api/everos/flush")
         async def api_flush(request: Request):

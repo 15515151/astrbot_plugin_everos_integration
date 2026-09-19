@@ -14,11 +14,11 @@ class EverOSClient:
     """EverOS HTTP 客户端。
 
     Args:
-        base_url: EverOS 服务地址，如 ``http://127.0.0.1:8765``
+        base_url: EverOS 服务地址，如 ``http://127.0.0.1:8000``
         timeout: 请求超时秒数，默认 30
     """
 
-    def __init__(self, base_url: str = "http://127.0.0.1:8765", timeout: float = 30.0):
+    def __init__(self, base_url: str = "http://127.0.0.1:8000", timeout: float = 30.0):
         self.base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(timeout=timeout)
 

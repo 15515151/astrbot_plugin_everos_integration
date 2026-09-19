@@ -1,261 +1,211 @@
 # EverOS for AstrBot
 
-**为 AstrBot 集成 EverOS 自进化记忆引擎，让 Agent 拥有长期记忆与自我学习能力。**
+**为 AstrBot 接入 EverOS 记忆引擎：长期记忆、自动对话总结、可检索的用户画像与 Agent 技能。**
 
 ---
 
 ## ✨ 功能
 
 | 功能 | 说明 |
-|------|------|
-| 🔌 **服务桥接** | 连接独立部署的 EverOS 容器（REST API） |
-| 🔧 **LLM 工具** | `everos_memorize` 写入记忆 / `everos_recall` 检索记忆 |
-| 📊 **WebUI 管理面板** | 状态监控 + 记忆统计 + 快速测试 + 语义检索 |
-| 🌐 **独立 WebUI 服务器** | 下载即用，无需手动启动，访问 `http://IP:18766` 即可 |
-| ⚙️ **配置管理** | 在 AstrBot 后台直接配置连接参数 |
-| 🌏 **中文原生支持** | 内置中文提示词，EverOS 提取的记忆为中文输出（需启用，见后文） |
+|---|---|
+| 🔌 **服务桥接** | 通过 HTTP API 连接独立部署的 EverOS |
+| 🔧 **LLM 工具** | `everos_memorize`（用户记忆）/ `everos_learn`（Agent 技能）/ `everos_recall`（检索） |
+| 💬 **自动对话记忆** | 每轮对话自动写入 EverOS，由边界检测抽取；空闲或超限自动提炼 |
+| 📥 **待提炼视图** | Dashboard 查看缓冲区中尚未提炼的消息全文，支持一键提炼 |
+| 📊 **WebUI 管理面板** | 状态 / 记忆仓库 / 待提炼 / 检索 / 技能库 / 系统 / 设置 |
+| 🌐 **独立 WebUI** | 安装即启动，浏览器访问 `http://<IP>:18766/` |
+| 🧩 **记忆隔离** | 按人格白名单使用独立 `app_id` |
+| 🌏 **语言跟随对话** | 中文对话产出中文记忆（EverOS 默认行为，无需额外配置） |
 
 ---
 
-## 📦 安装
+## 📦 一、部署 EverOS
 
-### 1. 部署 EverOS 后端
+插件需要一个已运行的 EverOS 服务。**EverOS 默认监听 `127.0.0.1:8000`**。
 
-本插件需要先有 EverOS 服务端在运行。[EverOS](https://github.com/EverMind-AI/EverOS) 是 EverMind 团队开发的自进化记忆系统，以下是三种部署方式：
-
-#### 方式一：本机/服务器直接部署（推荐单机场景）
+### 方式 A：源码 / uv
 
 ```bash
-# 1. 安装 EverOS
-pip install everos
+git clone https://github.com/EverMind-AI/EverOS.git
+cd EverOS
+uv sync
+everos init                 # 生成 <root>/everos.toml（默认根目录 ~/.everos）
 
-# 2. 初始化，生成 .env 配置文件
-everos init
+# 配置模型（二选一）
+#   1) 编辑 ~/.everos/everos.toml 的 [llm] 段
+#   2) 或使用环境变量：
+export EVEROS_LLM__MODEL=gpt-4.1-mini
+export EVEROS_LLM__BASE_URL=https://api.openai.com/v1
+export EVEROS_LLM__API_KEY=sk-...
 
-# 3. 编辑 .env，填入大模型 API Key（支持 OpenAI / DeepSeek / 硅基流动等）
-#    例如使用 DeepSeek：
-#    在 .env 中设置：
-#   LLM__MODEL=deepseek-chat
-#   LLM__BASE_URL=https://api.deepseek.com/v1
-#   LLM__API_KEY=sk-your-key-here
-
-# 4. 启动 EverOS 服务（默认监听 127.0.0.1:8765）
-everos server start
-
-# 验证服务是否正常
-curl http://127.0.0.1:8765/health
-# 预期返回: {"status":"ok"}
+everos server start         # 默认 127.0.0.1:8000
+curl http://127.0.0.1:8000/health
 ```
 
-> 如需修改监听地址为 `0.0.0.0`，编辑 `.env` 中的 `HOST=0.0.0.0`
+> ⚠️ 两个常见误解：
+> 1. `everos init` 生成的是 `everos.toml` / `ome.toml`，**不是 `.env`**；EverOS 也不会自动读取 `.env`。
+> 2. 配置项用 `<root>/everos.toml`，或 `EVEROS_<SECTION>__<KEY>` 环境变量（如 `EVEROS_API__HOST=0.0.0.0`、`EVEROS_API__PORT=8000`）。
 
-#### 方式二：Docker 部署（推荐生产环境）
+### 方式 B：Docker
+
+EverOS 仓库自带 `Dockerfile` 与 `docker-compose.yml`：
 
 ```bash
-# 1. 创建 EverOS 数据目录
-mkdir -p ~/everos-data && cd ~/everos-data
-
-# 2. 创建 docker-compose.yml
-cat > docker-compose.yml << 'EOF'
-version: '3.8'
-services:
-  everos:
-    image: evermind/everos:latest
-    container_name: everos
-    restart: unless-stopped
-    ports:
-      - "8765:8765"
-    volumes:
-      - ./data:/app/data
-      - ./.env:/app/.env
-    environment:
-      - TZ=Asia/Shanghai
-EOF
-
-# 3. 创建 .env 配置文件
-cat > .env << 'EOF'
-LLM__MODEL=deepseek-chat
-LLM__BASE_URL=https://api.deepseek.com/v1
-LLM__API_KEY=sk-your-key-here
-HOST=0.0.0.0
-PORT=8765
-EOF
-
-# 4. 启动
-docker-compose up -d
-
-# 验证
-curl http://127.0.0.1:8765/health
+git clone https://github.com/EverMind-AI/EverOS.git
+cd EverOS
+cp .env.example .env        # 填入 EVEROS_LLM__* 等
+docker compose up -d --build
+curl http://127.0.0.1:8000/health
 ```
 
-> 如果使用其他兼容 OpenAI 的 API（如硅基流动），只需改 `LLM__BASE_URL` 和 `LLM__API_KEY` 即可。
-
-#### 方式三：Docker 与 AstrBot 同机部署（本项目典型架构）
-
-若 AstrBot 已运行在 Docker 容器中，将 EverOS 部署在宿主机上（或另一个容器），
-通过 `host.docker.internal` 或内网 IP 互通：
+或手动构建运行（`-v` 把记忆目录挂到宿主机，插件需要读它）：
 
 ```bash
-# 宿主机上直接部署 EverOS
-pip install everos
-everos init
-# 编辑 .env，将 HOST 设为 0.0.0.0
-everos server start
-
-# 验证 AstrBot 容器内能否访问
-docker exec astrbot curl -s http://host.docker.internal:8765/health
+docker build -t everos:latest .
+docker run -d --name everos -p 8000:8000 -v "$PWD/everos-data:/data/everos" -e EVEROS_ROOT=/data/everos -e EVEROS_LLM__MODEL=gpt-4.1-mini -e EVEROS_LLM__BASE_URL=https://api.openai.com/v1 -e EVEROS_LLM__API_KEY=sk-... everos:latest
 ```
 
-### 2. 安装本插件
+### 与 AstrBot 的连通
 
-EverOS 部署完成后，安装本插件将其接入 AstrBot。
-
-#### 通过 AstrBot 插件市场安装
-AstrBot 后台 → 插件市场 → 搜索 `everos` → 一键安装
-
-#### 手动安装
-```bash
-# 方式一：克隆仓库
-cd /AstrBot/data/plugins/
-git clone https://github.com/Masumeiki/astrbot_plugin_everos_integration.git
-
-# 方式二：从 GitHub Releases 下载最新压缩包（覆盖更新）
-# 前往 https://github.com/Masumeiki/astrbot_plugin_everos_integration/releases
-# 下载 Source code (zip) 后解压到插件目录
-wget https://github.com/Masumeiki/astrbot_plugin_everos_integration/archive/refs/heads/main.zip
-unzip -o main.zip
-# 如果目录已存在，先删除旧版再覆盖
-rm -rf astrbot_plugin_everos_integration
-mv astrbot_plugin_everos_integration-main astrbot_plugin_everos_integration
-rm main.zip
-```
-
-#### 安装依赖
-```bash
-pip install httpx
-# 可选：如需手动启动 server.py 独立版
-pip install fastapi uvicorn
-```
-
-#### 配置连接
-在 AstrBot 后台 → 插件配置 → 设置 `everos_base_url` 指向你的 EverOS 服务地址。
-- 同机部署：`http://127.0.0.1:8765`
-- Docker 互通：`http://host.docker.internal:8765`（Linux 下可能需要配置 `--add-host` 或使用宿主机内网 IP）
-- 远程服务器：`http://<服务器IP>:8765`
-
-> 默认配置下，插件启动后会自动监听 `0.0.0.0:18766`，浏览器访问 `http://<服务器IP>:18766/` 即可打开独立 Dashboard。
+| AstrBot 位置 | `everos_base_url` |
+|---|---|
+| 与 EverOS 同宿主机 | `http://127.0.0.1:8000` |
+| AstrBot 在容器、EverOS 在宿主机 | `http://host.docker.internal:8000`（Linux 需 `--add-host=host.docker.internal:host-gateway`，或直接用宿主机内网 IP） |
+| 远程服务器 | `http://<服务器IP>:8000` |
 
 ---
 
-## ⚙️ 配置
+## 📥 二、安装插件
 
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `everos_base_url` | `http://127.0.0.1:8765` | EverOS 服务地址 |
-| `enable_tools` | `true` | 启用 LLM 工具 |
-| `enable_webui` | `true` | 启用 AstrBot 内嵌管理面板 |
-| `standalone_webui_enabled` | `true` | 启用独立 WebUI 服务器 |
-| `standalone_webui_host` | `0.0.0.0` | 独立 WebUI 监听地址 |
-| `standalone_webui_port` | `18766` | 独立 WebUI 访问端口 |
+AstrBot 后台 → 插件市场 → 搜索 `everos` 安装；或把本目录放到 `data/plugins/`。
+
+依赖（插件市场会自动安装，见 `requirements.txt`）：`httpx`、`fastapi`、`uvicorn`。
+
+### 配置连接
+
+AstrBot 后台 → 插件配置：
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `everos_base_url` | `http://127.0.0.1:8000` | EverOS 服务地址 |
+| `everos_data_dir` | `/opt/EverOS/everos-data` | **宿主机上 EverOS 的记忆根目录**（Docker 部署时是挂载出来的 `everos-data`）。用于自动发现全部记忆、读取待提炼缓冲区。留空则退化为只查 `app_id` / `default` / `webui` 三个猜测值 |
+| `app_id` / `project_id` | `astrbot` / `default` | 记忆分区 |
+| `isolation_personas` | `""` | 隔离人格白名单（逗号分隔） |
+
+> `everos_data_dir` 必须能被插件进程访问。若 AstrBot 与 EverOS 不在一台机器上，请留空（但记忆列表会退化为猜测的 `user_id`，且待提炼视图不可用）。
+
+---
+
+## ⚙️ 完整配置
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `everos_base_url` | `http://127.0.0.1:8000` | EverOS 地址 |
+| `everos_data_dir` | `/opt/EverOS/everos-data` | EverOS 记忆根目录（宿主机路径） |
+| `enable_tools` | `true` | 注册 LLM 工具 |
+| `enable_webui` | `true` | AstrBot 内嵌面板 |
+| `standalone_webui_enabled` | `true` | 独立 WebUI |
+| `standalone_webui_host` | `0.0.0.0` | 监听地址 |
+| `standalone_webui_port` | `18766` | 端口 |
 | `app_id` | `astrbot` | 应用标识 |
 | `project_id` | `default` | 项目标识 |
-| `isolation_personas` | `""` | 记忆隔离白名单（逗号分隔）。在此列表里的人格使用独立记忆空间，列表外的人格共享全部记忆。例如 `助手A,助手B` |
+| `isolation_personas` | `""` | 隔离人格白名单 |
+| `auto_capture_enabled` | `false` | 自动对话记忆（对话轨） |
+| `auto_capture_mode` | `both` | `both`=用户消息+机器人回复 / `user`=只记用户消息 |
+| `auto_capture_scope` | `all` | `all` / `private`（仅私聊）/ `group`（仅群聊） |
+| `auto_capture_sessions` | `""` | 会话白名单（`unified_msg_origin`，逗号分隔） |
+| `auto_capture_idle_flush_seconds` | `300` | 空闲多久自动提炼，0=关闭 |
+| `auto_capture_max_pending` | `80` | 单会话待提炼条数上限，0=关闭 |
+| `auto_capture_min_chars` | `2` | 短于该长度的消息跳过 |
 
 ---
 
 ## 🎮 使用
 
-### 命令
+### 命令（管理员）
 
-- `/everos` — 查看连接状态
+- `/everos status` — 查看连接状态
+- `/everos memorize <内容>` — 手动写一条用户记忆
+- `/everos learn <内容>` — 手动写一条 Agent 技能
+- `/everos flush [会话ID]` — 提炼缓冲区；不带参数 = 提炼所有待处理会话
+- `/everos search <关键词>` — 检索记忆
+- `/everos capture [on|off]` — 查看 / 切换自动对话记忆（运行期，持久化改插件配置）
+- `/everos remove <记忆ID>` — 删除一条记忆
+- `/everos help` — 帮助
 
 ### LLM 工具
 
-Agent 可调用：
-- `everos_memorize` — 将重要信息写入 EverOS 长期记忆
-- `everos_recall` — 从 EverOS 检索相关记忆
+- `everos_memorize` — 记录用户偏好 / 事实 / 关键信息
+- `everos_learn` — 记录 Agent 自己的工作规范 / 经验（进入 Agent Track，提炼为 Case / Skill）
+- `everos_recall` — 检索相关记忆
 
-### WebUI（两种方式）
+### 自动对话记忆
 
-**方式一：AstrBot 内嵌**
-安装后在 AstrBot 后台侧边栏可见 **EverOS Bridge**，点击打开管理面板。
+开启后，插件的 `on_llm_response` 钩子会把每一轮对话写入 EverOS：
 
-**方式二：独立端口（推荐）**
-插件安装后自动启动独立 WebUI 服务器，浏览器直接访问：
-```
-http://<服务器IP>:18766/
-```
-即可使用功能完整的 Dashboard。
+1. 只调用 `/api/v2/memory/add`，**不逐条 flush**，交给 EverOS 的边界检测决定何时抽取；
+2. `session_id` 取自会话标识（`unified_msg_origin`，清洗为 EverOS 允许的字符），同一会话稳定复用，跨轮累积；
+3. 后台每 30 秒扫描缓冲区：**空闲超过 `auto_capture_idle_flush_seconds`** 或 **单会话超过 `auto_capture_max_pending` 条** 时自动提炼。
 
----
+> 工具轨（`everos_memorize` / `everos_learn`）每次写入后立即提炼，所以缓冲区通常为空；对话轨产生的待提炼消息，可以在 WebUI 的 **待提炼** 标签页查看全文并一键提炼。
 
-## 🏗 架构
+### WebUI
 
-```
-AstrBot 容器
-  └── everos 插件
-        ├── main.py                    # 插件入口
-        ├── core/
-        │   ├── everos_client.py       # HTTP 客户端
-        │   ├── config_manager.py      # 配置管理
-        │   └── standalone_server.py   # 独立 WebUI 服务器
-        ├── tools/
-        │   └── everos_tools.py        # LLM 工具
-        └── pages/everos-dashboard/
-            ├── index.html             # 管理面板（v2）
-            ├── style.css              # 翡色主调设计系统
-            ├── app.js                 # 双端统一前端
-            └── server.py              # [可选] 手动启动独立版
-```
+- **内嵌**：AstrBot 后台侧边栏 → EverOS Bridge
+- **独立（推荐）**：浏览器打开 `http://<服务器IP>:18766/`
 
-### 通信流程
-
-```
-浏览器 ──→ :18766 ──→ standalone_server.py ──→ everos 后端(:8765)
-                            │
-AstrBot 后台 ──→ 插件内嵌页面 ──→ register_web_api ──→ everos 后端
-```
+页面：总览 / 记忆仓库 / **待提炼** / 检索 / 技能库 / 系统 / 设置。
 
 ---
 
-## 🌏 中文支持
+## 🏗 结构
 
-EverOS 默认使用英文提示词来提炼记忆，提取结果为英文。本插件已配置中文提示词，需在 EverOS 容器内启用：
-
-```bash
-# 进入 EverOS 容器
-docker exec -it everos sh
-
-# 编辑提示词配置文件
-vi /usr/local/lib/python3.12/site-packages/everos/config/prompt_slots/episode_extract.yaml
-
-# 将 enabled 改为 true，template 填入以下内容：
+```text
+astrbot_plugin_everos_integration/
+├── main.py                      # 插件入口：命令组、LLM 工具、Web API、on_llm_response 钩子
+├── core/
+│   ├── everos_client.py         # HTTP 客户端
+│   ├── config_manager.py        # 配置默认值
+│   ├── memory_reader.py         # 发现 owner、跨 owner 读取、缓冲区读取、flush
+│   ├── auto_capture.py          # 自动对话记忆（对话轨）+ 空闲/超限兜底提炼
+│   └── standalone_server.py     # 独立 WebUI（:18766）
+├── tools/
+│   └── everos_tools.py          # everos_memorize / everos_learn / everos_recall
+└── pages/everos-dashboard/
+    ├── index.html
+    ├── style.css
+    ├── app.js                   # 双端统一前端
+    └── server.py                # [可选] 手动启动的独立版
 ```
 
-```yaml
-enabled: true
-template: |
-  你是一位情节记忆生成专家。
+通信流程：
 
-  关键语言规则：你必须使用与输入对话内容相同语言输出。输入为中文则输出中文，输入为英文则输出英文。
-
-  请将以下对话内容转换为情节记忆。
-
-  对话开始时间：{conversation_start_time}
-  对话内容：
-  {conversation}
-
-  额外指令：{custom_instructions}
-
-  输出格式：{"title": str, "content": str}
+```text
+浏览器 ──:18766──▶ standalone_server.py ──▶ EverOS :8000
+AstrBot 后台 ──插件页──▶ register_web_api ──▶ EverOS :8000
+每轮对话 ──on_llm_response──▶ EverOS /memory/add（边界检测）
 ```
 
-```bash
-# 修改后重启 EverOS 使其生效
-docker restart everos
+---
+
+## 🌏 中文记忆
+
+**无需任何配置。** EverOS 自带的抽取提示词里就有 CRITICAL LANGUAGE RULE：输出语言与对话参与者书写的语言一致。因此中文对话天然产出中文记忆（本项目实测如此）。
+
+早期版本的本文档曾建议去修改 EverOS 容器内的 `prompt_slots/episode_extract.yaml` —— 这**既不必要、又会降低质量**：默认提示词包含更完整的时间解析、细节保留、检索友好等规则。而且 EverOS 1.3.1 的提示词加载器只读包内 bundled 文件、**没有用户级覆盖层**，所以容器里手改的内容重建镜像后会丢失。
+
+<details>
+<summary>确实需要自定义提示词时</summary>
+
+把自定义文件烤进镜像。例如在 EverOS 仓库里放一份 `episode_extract.yaml`，在 `Dockerfile` 中覆盖安装后的包内文件：
+
+```dockerfile
+COPY your-prompts/episode_extract.yaml /app/src/everos/config/prompt_slots/episode_extract.yaml
 ```
 
-此后新写入的对话会产生中文记忆摘要，已存在的英文记忆不会自动重写。
+然后 `docker compose up -d --build`。注意必须保留占位符 `{conversation_start_time}`、`{conversation}`、`{custom_instructions}`。
+
+</details>
 
 ---
 
@@ -265,38 +215,20 @@ Apache 2.0
 
 ---
 
-## 📋 v1.1.0 更新内容
+## 📋 更新记录
 
-### 新增功能
-- 🧠 **`everos_learn` 工具** — AI 智能体将自身技能/规则存入 Agent Track，触发 Case/Skill 提炼
-- 💬 **`/everos` 命令组** — `status` / `memorize` / `learn` / `flush` / `search` / `remove` / `help`
-- 🗑️ **记忆删除** — `POST /api/everos/forget` 接口 + `/everos remove` 命令
-- 📄 **分页** — 记忆仓库每页 15 条，支持翻页
-- 🔄 **对话积累模式** — 固定 session_id 积累消息，边界检测自然触发，提升记忆提炼质量
+### 本地分支增强
 
-### 优化改进
-- 🔍 **双轨检索** — 永忆引擎 v3 使用正交检索（user_id→User Track, agent_id→Agent Track），不轮询
-- ⏱️ **flush 结果展示** — `/everos flush` 显示提炼前后的记忆变化
-- 🎨 **全屏写入弹窗** — 仿记忆详情弹窗模式，居中显示
-- 📊 **记忆仓库排序** — 按时间倒序（最新的在最上面）
-- 🏠 **最近活动排序** — 最新的在最前面
+- **feat: 自动对话记忆（对话轨）** — `on_llm_response` 钩子 + 稳定 session + 空闲/超限兜底提炼 + `auto_capture_*` 配置 + `/everos capture`
+- **feat: WebUI 待提炼视图** — 查看缓冲区消息全文，支持单会话 / 全部提炼
+- **fix: WebUI 显示全部记忆** — 从记忆根目录发现真实 `user_id` / `agent_id`，不再只查 `app_id` / `default` / `webui`
+- **fix: flush 指向真实会话** — `/everos flush` 与 WebUI flush 不再写死 `default_dialog`，改为自动发现缓冲区中待提炼的会话
+- **fix: 默认端口** — `everos_base_url` 默认改为 `http://127.0.0.1:8000`（EverOS 默认端口，此前误写为 8765）
+- **docs: README 修正** — 端口、环境变量命名（`EVEROS_*`）、`everos init` 行为、Docker 示例、中文支持说明
 
-### Bug 修复
-- 修复 `server.py` 缺少 `import time` 导致的运行时崩溃
-- 修复 WebUI flush 默认 session 不匹配对话积累 session
-- 修复 ISO 字符串排序无效（`new Date()` 转换）
-- 修复 `standalone_server.py` 的 proxy_status 未传 user_id
+### v1.1.0
 
-### 完整修改文件清单
-| 文件 | 改动 |
-|------|------|
-| `main.py` | 命令组、`everos_learn` 注册、forget/remove 命令、flush 结果展示 |
-| `core/standalone_server.py` | forget API、flush 默认 session 改为 default_dialog |
-| `core/retrieval_hook.py` | v3 正交检索重写（去除轮询和 LM 回退） |
-| `core/dialog_sync.py` | 固定 session_id 积累模式 |
-| `tools/everos_tools.py` | 新增 `EverOSLearnTool` |
-| `pages/everos-dashboard/app.js` | 分页、排序、动态写入弹窗 |
-| `pages/everos-dashboard/index.html` | 优化写入弹窗结构 |
-| `pages/everos-dashboard/style.css` | 全屏遮罩/侧边栏/分页样式 |
-| `pages/everos-dashboard/server.py` | 补 `import time`、修复 proxy_status |
-| `metadata.yaml` | 版本号 → 1.1.0 |
+- 新增 `everos_learn` 工具（Agent Track）
+- 新增 `/everos` 命令组：`status` / `memorize` / `learn` / `flush` / `search` / `remove` / `help`
+- 独立 WebUI 服务器（:18766）
+- 记忆仓库分页、按时间倒序、写入弹窗

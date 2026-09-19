@@ -33,6 +33,8 @@ from .core.memory_reader import (
     fetch_all,
     flush_buffered,
     flush_session,
+    list_buffered_messages,
+    list_buffered_sessions,
 )
 from .core.memory_reader import search as read_search
 from .core.standalone_server import StandaloneServer
@@ -137,6 +139,12 @@ class EverOSIntegrationPlugin(Star):
                 self.api_flush,
                 ["POST"],
                 "触发记忆提炼",
+            )
+            self.context.register_web_api(
+                f"/{PLUGIN_NAME}/pending",
+                self.api_pending,
+                ["GET"],
+                "待提炼消息（缓冲区）",
             )
             logger.info("📊 EverOS Web API 已注册（全功能）")
         except Exception as e:
@@ -353,6 +361,32 @@ class EverOSIntegrationPlugin(Star):
             return jsonify({"ok": True, "data": {"items": all_items}})
         except Exception as e:
             return jsonify({"ok": False, "error": str(e), "results": []})
+
+    async def api_pending(self):
+        """GET /api/plug/everos_integration/pending"""
+        if self._client is None:
+            return jsonify({
+                "ok": False,
+                "error": "client not initialized",
+                "data": {"sessions": [], "messages": []},
+            })
+        try:
+            sessions = list_buffered_sessions(
+                self.config.everos_data_dir, app_id=self.config.app_id
+            )
+            messages = list_buffered_messages(
+                self.config.everos_data_dir, app_id=self.config.app_id
+            )
+            return jsonify({
+                "ok": True,
+                "data": {"sessions": sessions, "messages": messages},
+            })
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "error": str(e),
+                "data": {"sessions": [], "messages": []},
+            })
 
     async def api_flush(self):
         """POST /api/plug/everos_integration/flush"""

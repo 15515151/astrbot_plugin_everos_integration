@@ -5,7 +5,7 @@
 通过 /api/proxy/* 反向代理到 EverOS 后端。
 
 用法:
-    python server.py [--port 8766] [--everos-url http://127.0.0.1:8765]
+    python server.py [--port 8766] [--everos-url http://127.0.0.1:8000]
 """
 
 import argparse
@@ -32,7 +32,7 @@ app.add_middleware(
 )
 
 # 运行时配置
-EVEROS_BASE_URL = "http://127.0.0.1:8765"
+EVEROS_BASE_URL = "http://127.0.0.1:8000"
 HTTP_CLIENT: httpx.AsyncClient | None = None
 
 
@@ -255,7 +255,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="EverOS Dashboard Standalone Server")
     parser.add_argument("--port", type=int, default=8766, help="监听端口 (默认: 8766)")
-    parser.add_argument("--everos-url", type=str, default="http://127.0.0.1:8765", help="EverOS 服务地址")
+    parser.add_argument("--everos-url", type=str, default="http://127.0.0.1:8000", help="EverOS 服务地址")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="监听地址")
     args = parser.parse_args()
 

@@ -1387,3 +1387,56 @@ body {
   .status-dot.online.pulse { animation: none; }
   .vital__num.updating { animation: none; }
 }
+
+/* ─── 待提炼消息（缓冲区） ─── */
+.pending-item {
+  cursor: default;
+  align-items: stretch;
+}
+.pending-item:hover::after { content: none; }
+.pending-item__actions {
+  display: flex;
+  align-items: flex-start;
+  padding-left: var(--s-3);
+  border-left: 1px dashed var(--border);
+}
+.pending-msgs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+.pending-msg {
+  padding: var(--s-2) var(--s-3);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.pending-msg__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.pending-msg__role {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: 600;
+  background: var(--primary-light);
+  color: var(--primary);
+  text-transform: uppercase;
+}
+.pending-msg__role.assistant {
+  background: rgba(139, 92, 246, 0.12);
+  color: var(--purple);
+}
+.pending-msg__sender { font-family: var(--font-mono); }
+.pending-msg__time { margin-left: auto; }
+.pending-msg__text {
+  font-size: 13px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

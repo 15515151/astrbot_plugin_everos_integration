@@ -58,6 +58,24 @@ def _project_id_from_dir(name: str) -> str:
     return "default" if name == _DEFAULT_PROJECT_DIR else name
 
 
+def _iso_utc(value: Any) -> str:
+    """Format a SQLite UTC timestamp as ISO-8601 (milliseconds + Z).
+
+    The buffer table stores e.g. 2026-09-19 11:19:50.000000 (UTC). Browsers
+    parse the space-separated / 6-digit form inconsistently, so normalise it.
+    """
+    if not value:
+        return ""
+    text = str(value).strip().replace(" ", "T")
+    if "." in text:
+        head, _, frac = text.partition(".")
+        digits = "".join(ch for ch in frac if ch.isdigit())[:3]
+        text = f"{head}.{digits}" if digits else head
+    if "+" not in text and not text.endswith("Z"):
+        text += "Z"
+    return text
+
+
 def discover_owners(data_dir: str | None) -> list[dict[str, str]]:
     """Return every app_id/project_id/owner_type/owner_id triple on disk.
 
@@ -373,7 +391,60 @@ def list_buffered_sessions(
                 "project_id": db_project,
                 "session_id": session_id,
                 "pending": int(pending),
-                "last_updated": str(last_updated) if last_updated else "",
+                "last_updated": _iso_utc(last_updated),
+            }
+        )
+    return out
+
+
+def list_buffered_messages(
+    data_dir: str | None,
+    *,
+    app_id: str = "astrbot",
+) -> list[dict[str, Any]]:
+    """Return the buffered messages themselves, oldest first.
+
+    Same table as list_buffered_sessions, but one row per message so the
+    dashboard can show the full text still waiting to be extracted. Each item
+    is {app_id, project_id, session_id, role, sender_id, timestamp, text}.
+    Read-only and best-effort.
+    """
+    if not data_dir:
+        return []
+    db_path = Path(data_dir).expanduser() / ".index" / "sqlite" / "system.db"
+    if not db_path.is_file():
+        return []
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
+    except sqlite3.Error:
+        return []
+    try:
+        rows = con.execute(
+            "SELECT app_id, project_id, session_id, role, sender_id, "
+            "timestamp, text "
+            "FROM unprocessed_buffer "
+            "ORDER BY timestamp"
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
+
+    out: list[dict[str, Any]] = []
+    for db_app, db_project, session_id, role, sender_id, timestamp, text in rows:
+        if app_id and not (
+            db_app == app_id or str(db_app).startswith(f"{app_id}_")
+        ):
+            continue
+        out.append(
+            {
+                "app_id": db_app,
+                "project_id": db_project,
+                "session_id": session_id,
+                "role": role,
+                "sender_id": sender_id,
+                "timestamp": _iso_utc(timestamp),
+                "text": text or "",
             }
         )
     return out
