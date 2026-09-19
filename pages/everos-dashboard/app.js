@@ -282,16 +282,18 @@ function setupQuickActions() {
   $('qa-flush').addEventListener('click', async () => {
     toast('正在触发记忆提炼...');
     try {
-      // 调用 flush 端点
-      const data = await API.post('flush', {
-        session_id: 'webui',
-        app_id: 'astrbot',
-        project_id: 'default',
-      });
-      if (data.ok || data.status === 'ok') {
+      // 不传 session_id：后端会自动发现缓冲区里所有待提炼的会话
+      const data = await API.post('flush', {});
+      const payload = (data && data.data) ? data.data : (data || {});
+      const flushed = payload.flushed || 0;
+      if (flushed > 0) {
+        toast(`✓ 已提炼 ${flushed} 个会话`, 'success');
+      } else if (payload.status === 'no_pending') {
+        toast('缓冲区为空，没有待提炼的消息', 'success');
+      } else if (payload.ok || payload.status === 'ok') {
         toast('✓ 记忆提炼已触发', 'success');
       } else {
-        toast('触发完成', 'success');
+        toast('触发失败', 'error');
       }
       // 刷新总览
       setTimeout(() => loadOverview(), 1000);

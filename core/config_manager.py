@@ -14,6 +14,10 @@ _DEFAULTS: dict[str, Any] = {
     "standalone_webui_host": "0.0.0.0",
     "standalone_webui_port": 18766,
     "isolation_personas": "",
+    # Host path of the EverOS memory root (the everos-data bind mount).
+    # The WebUI walks it to discover every real user_id/agent_id, because
+    # EverOS has no "list owners" API.
+    "everos_data_dir": "/opt/EverOS/everos-data",
 }
 
 
@@ -43,6 +47,11 @@ class ConfigManager:
     @property
     def project_id(self) -> str:
         return self.get("project_id")
+
+    @property
+    def everos_data_dir(self) -> str:
+        """Host path of the EverOS memory root, used to discover owners."""
+        return self.get("everos_data_dir", "")
 
     # ─── 记忆隔离 ──────────────────────────────────────────────
 

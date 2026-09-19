@@ -26,6 +26,13 @@ from quart import jsonify, request
 
 from .core.config_manager import ConfigManager
 from .core.everos_client import EverOSClient
+from .core.memory_reader import (
+    count_by_type,
+    fetch_all,
+    flush_buffered,
+    flush_session,
+)
+from .core.memory_reader import search as read_search
 from .core.standalone_server import StandaloneServer
 from .tools.everos_tools import EverOSLearnTool, EverOSMemorizeTool, EverOSRecallTool
 
@@ -122,6 +129,12 @@ class EverOSIntegrationPlugin(Star):
                 ["POST"],
                 "语义检索记忆",
             )
+            self.context.register_web_api(
+                f"/{PLUGIN_NAME}/flush",
+                self.api_flush,
+                ["POST"],
+                "触发记忆提炼",
+            )
             logger.info("📊 EverOS Web API 已注册（全功能）")
         except Exception as e:
             logger.warning(f"Web API 注册失败: {e}")
@@ -137,34 +150,13 @@ class EverOSIntegrationPlugin(Star):
         if healthy:
             try:
                 t0 = time.monotonic()
-                # 多 user_id 聚合统计
-                candidate_uids = [
-                    self.config.app_id,
-                    "default", "webui",
-                ]
-                for mtype in ("episode", "profile", "agent_case", "agent_skill"):
-                    total = 0
-                    seen_ids = set()
-                    for uid in candidate_uids:
-                        try:
-                            result = await self._client.memory_get(
-                                memory_type=mtype, user_id=uid,
-                            )
-                            if isinstance(result, dict):
-                                data = result.get("data", result)
-                                if isinstance(data, dict):
-                                    items = data.get(mtype + "s", [])
-                                    for item in items:
-                                        mid = item.get("id", "")
-                                        if mid and mid not in seen_ids:
-                                            seen_ids.add(mid)
-                                            total += 1
-                                    tc = data.get("total_count", 0)
-                                    if tc > total:
-                                        total = tc
-                        except Exception:
-                            continue
-                    stats[mtype] = total
+                # 从记忆根目录自动发现所有 user_id / agent_id 再统计
+                stats = await count_by_type(
+                    self.config.everos_base_url,
+                    self.config.everos_data_dir,
+                    app_id=self.config.app_id,
+                    project_id=self.config.project_id,
+                )
                 latency = int((time.monotonic() - t0) * 1000)
             except Exception as e:
                 stats = {"error": str(e)}
@@ -187,34 +179,16 @@ class EverOSIntegrationPlugin(Star):
             return jsonify({"ok": False, "error": "client not initialized", "data": {"items": []}})
 
         try:
-            all_items = []
-            seen_ids = set()
-            candidate_uids = [
-                self.config.app_id,
-                "default", "webui",
+            items = await fetch_all(
+                self.config.everos_base_url,
+                self.config.everos_data_dir,
+                app_id=self.config.app_id,
+                project_id=self.config.project_id,
+            )
+            all_items = [
+                _normalize_item(dict(item), item.get("memory_type", "episode"))
+                for item in items
             ]
-            for mtype in ("episode", "profile", "agent_case", "agent_skill"):
-                for uid in candidate_uids:
-                    try:
-                        result = await self._client.memory_get(
-                            memory_type=mtype,
-                            user_id=uid,
-                        )
-                        if isinstance(result, dict):
-                            data = result.get("data", result)
-                            if isinstance(data, dict):
-                                items = data.get(mtype + "s", [])
-                                for item in items:
-                                    if isinstance(item, dict):
-                                        mid = item.get("id", "")
-                                        if mid and mid in seen_ids:
-                                            continue
-                                        seen_ids.add(mid)
-                                        item["memory_type"] = item.get("memory_type") or mtype
-                                        item = _normalize_item(item, mtype)
-                                        all_items.append(item)
-                    except Exception:
-                        continue
 
             # 按时间倒序，取前 10
             def _sort_key(item):
@@ -325,35 +299,18 @@ class EverOSIntegrationPlugin(Star):
             body = {}
 
         memory_type = body.get("memory_type", "episode")
-        candidate_uids = [
-            self.config.app_id,
-            "default", "webui",
-        ]
 
         try:
-            all_items = []
-            seen_ids = set()
-            for uid in candidate_uids:
-                try:
-                    result = await self._client.memory_get(
-                        memory_type=memory_type,
-                        user_id=uid,
-                    )
-                    if isinstance(result, dict):
-                        data = result.get("data", result)
-                        if isinstance(data, dict):
-                            items = data.get(memory_type + "s", [])
-                            for item in items:
-                                if isinstance(item, dict):
-                                    mid = item.get("id", "")
-                                    if mid and mid in seen_ids:
-                                        continue
-                                    seen_ids.add(mid)
-                                    item["memory_type"] = item.get("memory_type") or memory_type
-                                    item = _normalize_item(item, memory_type)
-                                    all_items.append(item)
-                except Exception:
-                    continue
+            items = await fetch_all(
+                self.config.everos_base_url,
+                self.config.everos_data_dir,
+                [memory_type],
+                app_id=self.config.app_id,
+                project_id=self.config.project_id,
+            )
+            all_items = [
+                _normalize_item(dict(item), memory_type) for item in items
+            ]
             return jsonify({"ok": True, "data": {"items": all_items}})
         except Exception as e:
             return jsonify({"ok": False, "error": str(e), "data": {"items": []}})
@@ -376,42 +333,71 @@ class EverOSIntegrationPlugin(Star):
             return jsonify({"ok": False, "error": "查询为空", "results": []})
 
         top_k = min(body.get("top_k", 10), 50)
-        candidate_uids = [
-            self.config.app_id,
-            "default", "webui",
-        ]
 
         try:
-            all_items = []
-            seen_ids = set()
-            per_uid = max(1, top_k // len(candidate_uids))
-            for uid in candidate_uids:
-                try:
-                    result = await self._client.memory_search(
-                        query=query,
-                        user_id=uid,
-                        app_id=self.config.app_id,
-                        project_id=self.config.project_id,
-                        top_k=per_uid,
-                    )
-                    if isinstance(result, dict):
-                        data = result.get("data", result)
-                        if isinstance(data, dict):
-                            for cat in ("episodes", "profiles", "agent_cases", "agent_skills"):
-                                for item in data.get(cat, []):
-                                    if isinstance(item, dict):
-                                        mid = item.get("id", "")
-                                        if mid and mid in seen_ids:
-                                            continue
-                                        seen_ids.add(mid)
-                                        item["memory_type"] = item.get("memory_type") or cat.rstrip("s")
-                                        item = _normalize_item(item, cat.rstrip("s"))
-                                        all_items.append(item)
-                except Exception:
-                    continue
+            items = await read_search(
+                self.config.everos_base_url,
+                self.config.everos_data_dir,
+                query,
+                top_k=top_k,
+                app_id=self.config.app_id,
+                project_id=self.config.project_id,
+            )
+            all_items = [
+                _normalize_item(dict(item), item.get("memory_type", "episode"))
+                for item in items
+            ]
             return jsonify({"ok": True, "data": {"items": all_items}})
         except Exception as e:
             return jsonify({"ok": False, "error": str(e), "results": []})
+
+    async def api_flush(self):
+        """POST /api/plug/everos_integration/flush"""
+        if self._client is None:
+            return jsonify({"ok": False, "error": "client not initialized"})
+
+        try:
+            body = await request.get_json()
+        except Exception:
+            body = {}
+
+        session_id = (body.get("session_id") or "").strip()
+        try:
+            if session_id:
+                status = await flush_session(
+                    self.config.everos_base_url,
+                    session_id,
+                    app_id=self.config.app_id,
+                    project_id=self.config.project_id,
+                )
+                return jsonify({
+                    "ok": True,
+                    "status": status,
+                    "flushed": 1,
+                    "message": f"会话 {session_id} → {status}",
+                })
+            results = await flush_buffered(
+                self.config.everos_base_url,
+                self.config.everos_data_dir,
+                app_id=self.config.app_id,
+                project_id=self.config.project_id,
+            )
+            if not results:
+                return jsonify({
+                    "ok": True,
+                    "status": "no_pending",
+                    "flushed": 0,
+                    "message": "缓冲区为空：当前没有待提炼的消息",
+                })
+            return jsonify({
+                "ok": True,
+                "status": "ok",
+                "flushed": len(results),
+                "sessions": results,
+                "message": f"已提炼 {len(results)} 个会话",
+            })
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)})
 
     # ─── 初始化 ────────────────────────────────────────────────────
 
@@ -517,100 +503,72 @@ class EverOSIntegrationPlugin(Star):
 
     @permission_type(PermissionType.ADMIN)
     @everos.command("flush")
-    async def cmd_everos_flush(self, event: AstrMessageEvent):
-        """/everos flush — 立即触发记忆提炼并显示结果"""
+    async def cmd_everos_flush(
+        self, event: AstrMessageEvent, session_id: str = ""
+    ):
+        """/everos flush [会话ID] — 立即触发记忆提炼
+
+        不带参数时自动发现缓冲区中所有待提炼的会话；带参数时只提炼该会话。
+        """
         if not self._client:
             yield event.plain_result("❌ EverOS 客户端未初始化")
             return
 
+        session_id = (session_id or "").strip()
         try:
-            # 1. 先统计提炼前的记忆数量
-            before_stats = await self._get_memory_stats()
-            before_total = sum(before_stats.values())
-
-            # 2. 发进度消息
-            yield event.plain_result(
-                f"🔄 正在触发 EverOS 记忆提炼……\n"
-                f"📊 当前记忆库: {before_stats.get('episode', 0)} 条 Episode, "
-                f"{before_stats.get('profile', 0)} 条 Profile, "
-                f"{before_stats.get('agent_case', 0)} 条 Case, "
-                f"{before_stats.get('agent_skill', 0)} 条 Skill"
-            )
-
-            # 3. 执行 flush
-            import httpx
-            async with httpx.AsyncClient(timeout=30) as c:
-                resp = await c.post(
-                    f"{self.config.everos_base_url}/api/v1/memory/flush",
-                    json={
-                        "session_id": "default_dialog",
-                        "app_id": self.config.app_id,
-                        "project_id": self.config.project_id,
-                    },
+            if session_id:
+                status = await flush_session(
+                    self.config.everos_base_url,
+                    session_id,
+                    app_id=self.config.app_id,
+                    project_id=self.config.project_id,
                 )
-                flush_data = resp.json()
-                flush_status = flush_data.get("data", {}).get("status", "unknown")
-
-            # 4. 再统计提炼后的变化
-            await asyncio.sleep(0.5)  # 短暂等待 Cascade 异步处理
-            after_stats = await self._get_memory_stats()
-
-            # 5. 计算变化
-            diffs = {}
-            for k in after_stats:
-                diff = after_stats[k] - before_stats.get(k, 0)
-                if diff != 0:
-                    diffs[k] = diff
-
-            # 6. 输出结果
-            if diffs:
-                lines = [f"✅ 记忆提炼完成（状态: {flush_status}）"]
-                for k, v in sorted(diffs.items()):
-                    emoji = {"episode": "📖", "profile": "👤", "agent_case": "📋", "agent_skill": "🧠"}.get(k, "📦")
-                    arrow = "📈" if v > 0 else "📉"
-                    lines.append(f"  {emoji} {k}: {before_stats.get(k, 0)} → {after_stats[k]} ({arrow}{v:+d})")
-                if flush_status == "extracted":
-                    lines.append(f"\n✨ 本次有新的记忆被提炼出来！")
-                else:
-                    lines.append(f"\n⏳ 消息还在积累中（未达到边界检测阈值），继续聊会自然触发提炼")
-                yield event.plain_result("\n".join(lines))
-            else:
                 yield event.plain_result(
-                    f"⏳ 缓冲区暂无足够消息触发提炼（状态: {flush_status}），继续聊天积累到 50 条/8192 token 后自动触发"
+                    f"✅ 会话 {session_id} 提炼完成（状态: {status}）"
                 )
+                return
 
+            before_stats = await self._get_memory_stats()
+            results = await flush_buffered(
+                self.config.everos_base_url,
+                self.config.everos_data_dir,
+                app_id=self.config.app_id,
+                project_id=self.config.project_id,
+            )
+            if not results:
+                yield event.plain_result(
+                    "⏳ 缓冲区为空：当前没有待提炼的消息。\n"
+                    "（插件的每次写入都会立即提炼，所以正常情况下这里就是空的；"
+                    "如果以后开启了对话缓存，这条命令会把它提炼出来。）"
+                )
+                return
+
+            lines = [f"✅ 已触发 {len(results)} 个会话的提炼："]
+            for item in results:
+                lines.append(
+                    f"  • {item.get('session_id')}"
+                    f"（{item.get('pending', '?')} 条）→ {item.get('status')}"
+                )
+            after_stats = await self._get_memory_stats()
+            diff = after_stats.get("episode", 0) - before_stats.get("episode", 0)
+            if diff > 0:
+                lines.append(
+                    f"\n📈 Episode: {before_stats.get('episode', 0)}"
+                    f" → {after_stats.get('episode', 0)} (+{diff})"
+                )
+            yield event.plain_result("\n".join(lines))
         except Exception as e:
             yield event.plain_result(f"❌ 触发失败: {e}")
 
     async def _get_memory_stats(self) -> dict[str, int]:
         """查询当前记忆库各类型的数量。"""
         try:
-            import httpx
-            async with httpx.AsyncClient(timeout=15) as c:
-                stats = {}
-                for mtype, uid in [
-                    ("episode", "default"), ("profile", "default"),
-                    ("agent_case", "default"), ("agent_skill", "default"),
-                ]:
-                    try:
-                        resp = await c.post(
-                            f"{self.config.everos_base_url}/api/v1/memory/get",
-                            json={
-                                "memory_type": mtype,
-                                "user_id": uid,
-                                "app_id": self.config.app_id,
-                                "project_id": self.config.project_id,
-                            },
-                        )
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            items = data.get("data", {}).get(mtype + "s", [])
-                            stats[mtype] = len(items)
-                        else:
-                            stats[mtype] = 0
-                    except Exception:
-                        stats[mtype] = 0
-                return stats
+            return await count_by_type(
+                self.config.everos_base_url,
+                self.config.everos_data_dir,
+                app_id=self.config.app_id,
+                project_id=self.config.project_id,
+            )
         except Exception:
             return {"episode": 0, "profile": 0, "agent_case": 0, "agent_skill": 0}
 
@@ -662,7 +620,7 @@ class EverOSIntegrationPlugin(Star):
             "/everos status         — 查看连接状态\n"
             "/everos memorize <内容> — 手动存储记忆（User Track）\n"
             "/everos learn <内容>    — 手动存储技能（Agent Track）\n"
-            "/everos flush          — 立即触发记忆提炼\n"
+            "/everos flush [会话ID]  — 立即触发记忆提炼（不带参数=提炼所有待处理会话）\n"
             "/everos search <关键词> — 搜索记忆\n"
             "/everos remove <记忆ID> — 删除指定记忆\n"
             "/everos help           — 显示此帮助"

@@ -23,6 +23,9 @@ try:
     from fastapi.middleware.cors import CORSMiddleware
     import httpx
 
+    from .memory_reader import count_by_type, fetch_all, flush_buffered, flush_session
+    from .memory_reader import search as read_search
+
     FASTAPI_AVAILABLE = True
 except ImportError:
     FASTAPI_AVAILABLE = False
@@ -148,40 +151,17 @@ class StandaloneServer:
                 ok = health_data.get("status") == "ok"
 
                 stats = {}
-                # 尝试多个可能的 user_id 以覆盖不同用户写入的记忆
-                candidate_uids = [
-                    self.config.get("app_id", "astrbot"),
-                    "default", "webui",
-                ]
-                for mtype in ("episode", "profile", "agent_case", "agent_skill"):
-                    total = 0
-                    seen_ids = set()
-                    for uid in candidate_uids:
-                        try:
-                            r = await client.post(
-                                f"{base_url}/api/v1/memory/get",
-                                json={
-                                    "memory_type": mtype,
-                                    "user_id": uid,
-                                    "app_id": "astrbot",
-                                    "project_id": "default",
-                                },
-                            )
-                            data = r.json()
-                            d = data.get("data", {})
-                            items = d.get(mtype + "s", [])
-                            for item in items:
-                                mid = item.get("id", "")
-                                if mid and mid not in seen_ids:
-                                    seen_ids.add(mid)
-                                    total += 1
-                            # 如果 API 返回了 total_count，用最大值
-                            tc = d.get("total_count", 0)
-                            if tc > total:
-                                total = tc
-                        except Exception:
-                            continue
-                    stats[mtype] = total
+                # 从记忆根目录自动发现所有 user_id / agent_id 再统计，
+                # 不再靠 astrbot/default/webui 这几个猜测值。
+                try:
+                    stats = await count_by_type(
+                        base_url,
+                        self.config.get("everos_data_dir", ""),
+                        app_id=self.config.get("app_id", "astrbot"),
+                        project_id=self.config.get("project_id", "default"),
+                    )
+                except Exception:
+                    stats = {}
 
                 return {
                     "healthy": ok,
@@ -199,39 +179,17 @@ class StandaloneServer:
             """获取各类型记忆（最近活动）。"""
             client = self._get_client()
             base_url = self._get_everos_url()
-            candidate_uids = [
-                self.config.get("app_id", "astrbot"),
-                "default", "webui",
-            ]
             try:
-                all_items = []
-                seen_ids = set()
-                for mtype in ("episode", "profile", "agent_case", "agent_skill"):
-                    for uid in candidate_uids:
-                        try:
-                            r = await client.post(
-                                f"{base_url}/api/v1/memory/get",
-                                json={
-                                    "memory_type": mtype,
-                                    "user_id": uid,
-                                    "app_id": "astrbot",
-                                    "project_id": "default",
-                                },
-                            )
-                            data = r.json()
-                            d = data.get("data", {})
-                            items = d.get(mtype + "s", [])
-                            for item in items:
-                                if isinstance(item, dict):
-                                    mid = item.get("id", "")
-                                    if mid and mid in seen_ids:
-                                        continue
-                                    seen_ids.add(mid)
-                                    item["memory_type"] = item.get("memory_type") or mtype
-                                    item = _normalize_item(item, mtype)
-                                    all_items.append(item)
-                        except Exception:
-                            continue
+                items = await fetch_all(
+                    base_url,
+                    self.config.get("everos_data_dir", ""),
+                    app_id=self.config.get("app_id", "astrbot"),
+                    project_id=self.config.get("project_id", "default"),
+                )
+                all_items = [
+                    _normalize_item(dict(item), item.get("memory_type", "episode"))
+                    for item in items
+                ]
                 return {"ok": True, "data": {"items": all_items}}
             except Exception as e:
                 return {"ok": False, "error": str(e), "data": {"items": []}}
@@ -278,63 +236,66 @@ class StandaloneServer:
             """按类型获取记忆。"""
             body = await request.json()
             memory_type = body.get("memory_type", "episode")
-            candidate_uids = [
-                self.config.get("app_id", "astrbot"),
-                "default", "webui",
-            ]
-            client = self._get_client()
             base_url = self._get_everos_url()
             try:
-                all_items = []
-                seen_ids = set()
-                for uid in candidate_uids:
-                    try:
-                        r = await client.post(
-                            f"{base_url}/api/v1/memory/get",
-                            json={
-                                "memory_type": memory_type,
-                                "user_id": uid,
-                                "app_id": "astrbot",
-                                "project_id": "default",
-                            },
-                        )
-                        r.raise_for_status()
-                        data = r.json()
-                        d = data.get("data", {})
-                        items = d.get(memory_type + "s", [])
-                        for item in items:
-                            if isinstance(item, dict):
-                                mid = item.get("id", "")
-                                if mid and mid in seen_ids:
-                                    continue
-                                seen_ids.add(mid)
-                                item["memory_type"] = item.get("memory_type") or memory_type
-                                item = _normalize_item(item, memory_type)
-                                all_items.append(item)
-                    except Exception:
-                        continue
+                items = await fetch_all(
+                    base_url,
+                    self.config.get("everos_data_dir", ""),
+                    [memory_type],
+                    app_id=self.config.get("app_id", "astrbot"),
+                    project_id=self.config.get("project_id", "default"),
+                )
+                all_items = [
+                    _normalize_item(dict(item), memory_type) for item in items
+                ]
                 return {"ok": True, "data": {"items": all_items}}
             except Exception as e:
                 return {"ok": False, "error": str(e), "data": {"items": []}}
 
         @self.app.post("/api/everos/flush")
         async def api_flush(request: Request):
-            """触发记忆提炼。"""
+            """触发记忆提炼。
+
+            指定 session_id 时只提炼该会话；不带参数时自动发现缓冲区中所有
+            待提炼的会话并逐个 flush（EverOS 没有"列出会话"的接口，这里直接
+            只读 unprocessed_buffer 表）。
+            """
             body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-            session_id = body.get("session_id", "default_dialog")
-            client = self._get_client()
+            app_id = self.config.get("app_id", "astrbot")
+            project_id = self.config.get("project_id", "default")
             base_url = self._get_everos_url()
+            session_id = (body.get("session_id") or "").strip()
             try:
-                resp = await client.post(
-                    f"{base_url}/api/v1/memory/flush",
-                    json={
-                        "session_id": session_id,
-                        "app_id": self.config.get("app_id", "astrbot"),
-                        "project_id": self.config.get("project_id", "default"),
-                    },
+                if session_id:
+                    status = await flush_session(
+                        base_url, session_id, app_id=app_id, project_id=project_id
+                    )
+                    return {
+                        "ok": True,
+                        "status": status,
+                        "flushed": 1,
+                        "message": f"会话 {session_id} → {status}",
+                    }
+                results = await flush_buffered(
+                    base_url,
+                    self.config.get("everos_data_dir", ""),
+                    app_id=app_id,
+                    project_id=project_id,
                 )
-                resp.raise_for_status()
-                return {"ok": True, "status": "ok", "message": "记忆提炼已触发"}
+                if not results:
+                    return {
+                        "ok": True,
+                        "status": "no_pending",
+                        "flushed": 0,
+                        "message": "缓冲区为空：当前没有待提炼的消息",
+                    }
+                return {
+                    "ok": True,
+                    "status": "ok",
+                    "flushed": len(results),
+                    "sessions": results,
+                    "message": f"已提炼 {len(results)} 个会话",
+                }
             except Exception as e:
                 return {"ok": False, "error": str(e)}
 
@@ -344,42 +305,20 @@ class StandaloneServer:
             body = await request.json()
             query = body.get("query", "")
             top_k = body.get("top_k", 10)
-            candidate_uids = [
-                self.config.get("app_id", "astrbot"),
-                "default", "webui",
-            ]
-            client = self._get_client()
             base_url = self._get_everos_url()
             try:
-                all_items = []
-                seen_ids = set()
-                per_uid = max(1, top_k // len(candidate_uids))
-                for uid in candidate_uids:
-                    try:
-                        resp = await client.post(
-                            f"{base_url}/api/v1/memory/search",
-                            json={
-                                "query": query,
-                                "user_id": uid,
-                                "app_id": self.config.get("app_id", "astrbot"),
-                                "project_id": self.config.get("project_id", "default"),
-                                "top_k": per_uid,
-                            },
-                        )
-                        raw = resp.json()
-                        rd = raw.get("data", {})
-                        for key in ("episodes", "profiles", "agent_cases", "agent_skills"):
-                            for item in rd.get(key, []):
-                                if isinstance(item, dict):
-                                    mid = item.get("id", "")
-                                    if mid and mid in seen_ids:
-                                        continue
-                                    seen_ids.add(mid)
-                                    item["memory_type"] = item.get("memory_type") or key.rstrip("s")
-                                    item = _normalize_item(item, key.rstrip("s"))
-                                    all_items.append(item)
-                    except Exception:
-                        continue
+                items = await read_search(
+                    base_url,
+                    self.config.get("everos_data_dir", ""),
+                    query,
+                    top_k=top_k,
+                    app_id=self.config.get("app_id", "astrbot"),
+                    project_id=self.config.get("project_id", "default"),
+                )
+                all_items = [
+                    _normalize_item(dict(item), item.get("memory_type", "episode"))
+                    for item in items
+                ]
                 return {"ok": True, "data": {"items": all_items}}
             except Exception as e:
                 return {"ok": False, "error": str(e), "data": {"items": []}}
@@ -455,7 +394,13 @@ class StandaloneServer:
             async def _serve():
                 try:
                     await self.server.serve()
-                except Exception as e:
+                except asyncio.CancelledError:
+                    raise
+                except BaseException as e:
+                    # uvicorn calls sys.exit(1) when startup fails (e.g. the
+                    # port is already in use). SystemExit is a BaseException,
+                    # and letting it escape an asyncio task tears down AstrBot's
+                    # entire event loop, so it must be swallowed here.
                     logger.error(f"[EverOS] 独立 WebUI 运行异常: {e}")
                 finally:
                     self._running = False
@@ -470,9 +415,19 @@ class StandaloneServer:
         if self.server:
             self.server.should_exit = True
         if self.server_task:
-            self.server_task.cancel()
+            # Let uvicorn shut down gracefully so the listening socket is
+            # released before a reloaded instance binds the same port. The old
+            # code cancelled immediately, which left the socket open and made
+            # the next start() fail with EADDRINUSE.
             try:
-                await self.server_task
+                await asyncio.wait_for(self.server_task, timeout=5)
+            except asyncio.TimeoutError:
+                logger.warning("[EverOS] 独立 WebUI 关闭超时，强制取消")
+                self.server_task.cancel()
+                try:
+                    await self.server_task
+                except asyncio.CancelledError:
+                    pass
             except asyncio.CancelledError:
                 pass
             self.server_task = None
