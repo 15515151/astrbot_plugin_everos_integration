@@ -334,7 +334,10 @@ def list_buffered_sessions(
     the system SQLite. Read-only and best-effort: returns [] when the database
     is missing or unreadable.
 
-    Each item is {app_id, project_id, session_id, pending}.
+    Each item is
+    {app_id, project_id, session_id, pending, last_updated}.
+    last_updated is the newest row timestamp (UTC) for that session, used by
+    the auto-capture loop to decide when a session has gone idle.
     """
     if not data_dir:
         return []
@@ -347,7 +350,7 @@ def list_buffered_sessions(
         return []
     try:
         rows = con.execute(
-            "SELECT app_id, project_id, session_id, COUNT(*) "
+            "SELECT app_id, project_id, session_id, COUNT(*), MAX(updated_at) "
             "FROM unprocessed_buffer "
             "GROUP BY app_id, project_id, session_id"
         ).fetchall()
@@ -357,7 +360,7 @@ def list_buffered_sessions(
         con.close()
 
     out: list[dict[str, Any]] = []
-    for db_app, db_project, session_id, pending in rows:
+    for db_app, db_project, session_id, pending, last_updated in rows:
         # Same app-space filter used for reads: the configured app_id plus
         # its isolation-persona variants.
         if app_id and not (
@@ -370,6 +373,7 @@ def list_buffered_sessions(
                 "project_id": db_project,
                 "session_id": session_id,
                 "pending": int(pending),
+                "last_updated": str(last_updated) if last_updated else "",
             }
         )
     return out

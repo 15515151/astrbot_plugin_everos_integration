@@ -56,5 +56,47 @@
     "hint": "指向 everos-data 目录，WebUI 据此自动发现所有 user_id/agent_id。留空则退化为只查 app_id/default/webui。",
     "type": "string",
     "default": "/opt/EverOS/everos-data"
+  },
+  "auto_capture_enabled": {
+    "description": "自动对话记忆（对话轨）",
+    "hint": "开启后每轮真实对话都会写入 EverOS，由边界检测抽取；空闲或条数超限时自动提炼。会持续消耗 LLM 额度并保存对话内容。",
+    "type": "bool",
+    "default": false
+  },
+  "auto_capture_mode": {
+    "description": "记录内容",
+    "hint": "both=用户消息+机器人回复；user=只记录用户消息",
+    "type": "string",
+    "default": "both"
+  },
+  "auto_capture_scope": {
+    "description": "捕获范围",
+    "hint": "all=私聊+群聊；private=仅私聊；group=仅群聊",
+    "type": "string",
+    "default": "all"
+  },
+  "auto_capture_sessions": {
+    "description": "会话白名单（可选）",
+    "hint": "逗号分隔的 unified_msg_origin；留空=不限制",
+    "type": "string",
+    "default": ""
+  },
+  "auto_capture_idle_flush_seconds": {
+    "description": "空闲自动提炼秒数",
+    "hint": "会话超过这么久没有新消息就触发兜底提炼，0=关闭",
+    "type": "int",
+    "default": 300
+  },
+  "auto_capture_max_pending": {
+    "description": "单会话待提炼条数上限",
+    "hint": "缓冲区攒到这么多条就强制提炼，0=关闭",
+    "type": "int",
+    "default": 80
+  },
+  "auto_capture_min_chars": {
+    "description": "最短捕获长度",
+    "hint": "短于该长度的用户消息跳过",
+    "type": "int",
+    "default": 2
   }
 }

@@ -21,9 +21,11 @@ from typing import Any
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.event.filter import PermissionType, permission_type
+from astrbot.api.provider import LLMResponse
 from astrbot.api.star import Context, Star, StarTools, register
 from quart import jsonify, request
 
+from .core.auto_capture import AutoCapture
 from .core.config_manager import ConfigManager
 from .core.everos_client import EverOSClient
 from .core.memory_reader import (
@@ -81,6 +83,7 @@ class EverOSIntegrationPlugin(Star):
         self._tools_registered = False
         self._healthy = False
         self._standalone_server: StandaloneServer | None = None
+        self._auto_capture: AutoCapture | None = None
 
         # 注册 Web API
         self._register_web_apis()
@@ -423,6 +426,19 @@ class EverOSIntegrationPlugin(Star):
         except Exception as e:
             logger.error(f"EverOS Integration 初始化失败: {e}", exc_info=True)
 
+        # 启动自动对话记忆（对话轨）：只 /add，不逐条 flush，交给边界检测 + 后台兜底
+        try:
+            self._auto_capture = AutoCapture(self.config, logger)
+            await self._auto_capture.start()
+            logger.info(
+                f"[EverOS] 自动对话记忆: "
+                f"{'已开启' if self._auto_capture.enabled else '未开启'}"
+                f"（scope={self.config.get('auto_capture_scope', 'all')}, "
+                f"mode={self.config.get('auto_capture_mode', 'both')}）"
+            )
+        except Exception as e:
+            logger.warning(f"[EverOS] 自动对话记忆启动失败: {e}（不影响插件主体功能）")
+
         # 启动独立 WebUI 服务器（下载即用，访问 http://IP:18766）
         try:
             self._standalone_server = StandaloneServer(self)
@@ -446,6 +462,24 @@ class EverOSIntegrationPlugin(Star):
             logger.info("🔧 LLM 工具已注册: everos_learn, everos_memorize, everos_recall")
         except Exception as e:
             logger.error(f"LLM 工具注册失败: {e}", exc_info=True)
+
+    # ─── 自动对话记忆（对话轨）────────────────────────────────────────
+
+    @filter.on_llm_response()
+    async def on_llm_response(
+        self, event: AstrMessageEvent, response: LLMResponse
+    ) -> None:
+        """每轮 LLM 回复结束后，把这轮真实对话喂给 EverOS。
+
+        只 /add 不 flush：由 EverOS 边界检测决定何时抽取，空闲/超限时由
+        AutoCapture 的后台循环兜底。异常只记 debug，绝不影响正常聊天。
+        """
+        if self._auto_capture is None:
+            return
+        try:
+            await self._auto_capture.record_turn(event, response)
+        except Exception as e:
+            logger.debug(f"[EverOS] auto-capture skipped: {e}")
 
     # ─── 命令组 ──────────────────────────────────────────────────────
 
@@ -612,6 +646,35 @@ class EverOSIntegrationPlugin(Star):
             yield event.plain_result(f"❌ 删除失败: {e}")
 
     @permission_type(PermissionType.ADMIN)
+    @everos.command("capture")
+    async def cmd_everos_capture(self, event: AstrMessageEvent, state: str = ""):
+        """/everos capture [on|off] — 查看/切换自动对话记忆"""
+        if self._auto_capture is None:
+            yield event.plain_result("❌ 自动对话记忆未初始化")
+            return
+
+        arg = (state or "").strip().lower()
+        if arg in ("on", "1", "true", "开", "开启"):
+            self._auto_capture.set_enabled(True)
+            yield event.plain_result(
+                "✅ 自动对话记忆：已开启（仅本次运行有效；要持久化请改插件配置 "
+                "auto_capture_enabled）"
+            )
+        elif arg in ("off", "0", "false", "关", "关闭"):
+            self._auto_capture.set_enabled(False)
+            yield event.plain_result("🛑 自动对话记忆：已关闭（仅本次运行有效）")
+        else:
+            state_txt = "开启" if self._auto_capture.enabled else "关闭"
+            yield event.plain_result(
+                f"📥 自动对话记忆当前：{state_txt}\n"
+                f"  范围：{self.config.get('auto_capture_scope', 'all')}  "
+                f"记录：{self.config.get('auto_capture_mode', 'both')}\n"
+                f"  空闲提炼：{self.config.get('auto_capture_idle_flush_seconds', 300)}s  "
+                f"条数上限：{self.config.get('auto_capture_max_pending', 80)}\n"
+                "用法：/everos capture on|off"
+            )
+
+    @permission_type(PermissionType.ADMIN)
     @everos.command("help")
     async def cmd_everos_help(self, event: AstrMessageEvent):
         """/everos help — 显示帮助信息"""
@@ -622,6 +685,7 @@ class EverOSIntegrationPlugin(Star):
             "/everos learn <内容>    — 手动存储技能（Agent Track）\n"
             "/everos flush [会话ID]  — 立即触发记忆提炼（不带参数=提炼所有待处理会话）\n"
             "/everos search <关键词> — 搜索记忆\n"
+            "/everos capture [on|off] — 查看/切换自动对话记忆\n"
             "/everos remove <记忆ID> — 删除指定记忆\n"
             "/everos help           — 显示此帮助"
         )
@@ -629,7 +693,9 @@ class EverOSIntegrationPlugin(Star):
     # ─── 生命周期 ──────────────────────────────────────────────────
 
     async def terminate(self) -> None:
-        """插件卸载时关闭 HTTP 客户端和独立 WebUI。"""
+        """插件卸载时关闭 HTTP 客户端、自动捕获和独立 WebUI。"""
+        if self._auto_capture:
+            await self._auto_capture.stop()
         if self._client:
             await self._client.close()
         if self._standalone_server:

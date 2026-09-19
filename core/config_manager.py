@@ -18,6 +18,16 @@ _DEFAULTS: dict[str, Any] = {
     # The WebUI walks it to discover every real user_id/agent_id, because
     # EverOS has no "list owners" API.
     "everos_data_dir": "/opt/EverOS/everos-data",
+    # ── 自动对话记忆（对话轨）──────────────────────────────────
+    # 把每轮真实对话 /add 给 EverOS，由 EverOS 的边界检测决定何时抽取；
+    # 空闲或条数超限时由后台循环兜底 flush。
+    "auto_capture_enabled": False,
+    "auto_capture_mode": "both",           # both / user
+    "auto_capture_scope": "all",           # all / private / group
+    "auto_capture_sessions": "",           # 可选白名单(unified_msg_origin, 逗号分隔)
+    "auto_capture_idle_flush_seconds": 300,
+    "auto_capture_max_pending": 80,
+    "auto_capture_min_chars": 2,
 }
 
 
