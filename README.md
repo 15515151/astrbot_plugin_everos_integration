@@ -115,10 +115,13 @@ AstrBot 后台 → 插件配置：
 | `auto_capture_enabled` | `false` | 自动对话记忆（对话轨） |
 | `auto_capture_mode` | `both` | `both`=用户消息+机器人回复 / `user`=只记用户消息 |
 | `auto_capture_scope` | `all` | `all` / `private`（仅私聊）/ `group`（仅群聊） |
+| `auto_capture_per_user` | `true` | `true`=同一群里每个人与机器人的对话分别会话/提炼（按人隔离）；`false`=整个群共用一个会话 |
 | `auto_capture_sessions` | `""` | 会话白名单（`unified_msg_origin`，逗号分隔） |
 | `auto_capture_idle_flush_seconds` | `300` | 空闲多久自动提炼，0=关闭 |
 | `auto_capture_max_pending` | `80` | 单会话待提炼条数上限，0=关闭 |
-| `auto_capture_min_chars` | `2` | 短于该长度的消息跳过 |
+| `auto_capture_min_turns` | `1` | 空闲提炼前单会话至少需要的用户轮数（1 轮=1 条用户消息）；达到才提炼，空闲超时仍不足则直接丢弃 |
+| `auto_capture_min_chars` | `2` | 单条用户消息短于该**字符数**则跳过（注意：不是轮数） |
+| `assistant_display_name` | `""` | 机器人发言在记忆中的标注名。留空=自动使用当前人格名，仍无则用「我」；改机器人账号也不影响记忆里的自称 |
 | `memory_injection_enabled` | `false` | 记忆自动注入（RAG） |
 | `memory_injection_scope` | `self` | `self`=只搜当前说话人；`all`=还搜索所有用户（AI 可引用别人的记忆） |
 | `memory_injection_top_k` | `5` | 每次注入的 episode/profile 条数上限 |
@@ -151,8 +154,10 @@ AstrBot 后台 → 插件配置：
 开启后，插件的 `on_llm_response` 钩子会把每一轮对话写入 EverOS：
 
 1. 只调用 `/api/v2/memory/add`，**不逐条 flush**，交给 EverOS 的边界检测决定何时抽取；
-2. `session_id` 取自会话标识（`unified_msg_origin`，清洗为 EverOS 允许的字符），同一会话稳定复用，跨轮累积；
-3. 后台每 30 秒扫描缓冲区：**空闲超过 `auto_capture_idle_flush_seconds`** 或 **单会话超过 `auto_capture_max_pending` 条** 时自动提炼。
+2. `session_id` 取自会话标识（`unified_msg_origin`，清洗为 EverOS 允许的字符）；开启 `auto_capture_per_user`（默认）时还会带上说话人 ID，这样同一个群里每个人的对话各自缓冲、各自提炼，不会把多人发言混进同一篇记忆。同一会话的 ID 稳定复用，跨轮累积；
+3. 后台每 30 秒扫描缓冲区：**空闲超过 `auto_capture_idle_flush_seconds`** 或 **单会话超过 `auto_capture_max_pending` 条** 时自动提炼；若该会话空闲超时但用户轮数仍不足 `auto_capture_min_turns`，则**直接丢弃**这些缓冲消息，既不提炼也不继续占着待提炼列表。
+
+> 机器人回复会同时带上真实的 `sender_id`（平台账号，用于归属/隔离）和可读的 `sender_name`（记忆文本里的自称）。`sender_name` 的取值顺序为：`assistant_display_name` 配置 → 当前人格名 → `我`。因此换机器人账号或改人格名后，旧记忆不变，新记忆会用新的名字（EverOS 摘要默认使用 `sender_name` 渲染对话）。
 
 > 工具轨（`everos_memorize` / `everos_learn`）每次写入后立即提炼，所以缓冲区通常为空；对话轨产生的待提炼消息，可以在 WebUI 的 **待提炼** 标签页查看全文并一键提炼。
 
@@ -242,6 +247,7 @@ Apache 2.0
 
 ### 本地分支增强
 
+- **feat: 记忆中的机器人自称** — 新增 `assistant_display_name` 配置；写入记忆时用 `sender_name` 标注机器人发言（配置 → 人格名 → 「我」），不再把平台账号写进摘要
 - **feat: 自动对话记忆（对话轨）** — `on_llm_response` 钩子 + 稳定 session + 空闲/超限兜底提炼 + `auto_capture_*` 配置 + `/everos capture`
 - **feat: WebUI 待提炼视图** — 查看缓冲区消息全文，支持单会话 / 全部提炼
 - **fix: WebUI 显示全部记忆** — 从记忆根目录发现真实 `user_id` / `agent_id`，不再只查 `app_id` / `default` / `webui`

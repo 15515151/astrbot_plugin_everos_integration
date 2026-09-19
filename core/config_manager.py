@@ -25,17 +25,26 @@ _DEFAULTS: dict[str, Any] = {
     # 把每轮真实对话 /add 给 EverOS，由 EverOS 的边界检测决定何时抽取；
     # 空闲或条数超限时由后台循环兜底 flush。
     "auto_capture_enabled": False,
-    "auto_capture_mode": "both",           # both / user
-    "auto_capture_scope": "all",           # all / private / group
-    "auto_capture_sessions": "",           # 可选白名单(unified_msg_origin, 逗号分隔)
+    "auto_capture_mode": "both",  # both / user
+    "auto_capture_scope": "all",  # all / private / group
+    # true=按人隔离会话，同一群里每个人与机器人的对话分别缓冲/提炼；
+    # false=按整个群会话一起缓冲/提炼。
+    "auto_capture_per_user": True,
+    "auto_capture_sessions": "",  # 可选白名单(unified_msg_origin, 逗号分隔)
     "auto_capture_idle_flush_seconds": 300,
     "auto_capture_max_pending": 80,
+    # 空闲提炼前单会话至少需要的用户轮数（1 轮 = 1 条用户消息）。
+    # 达到就提炼；空闲超过阈值仍不足则直接丢弃，不留在待提炼里。
+    "auto_capture_min_turns": 1,
     "auto_capture_min_chars": 2,
+    # 写入记忆时用于标注机器人发言的名称（人格名 / 自称）。
+    # 留空则自动使用当前人格名，仍无法解析时退化为「我」。
+    "assistant_display_name": "",
     # ── 记忆自动注入（RAG）────────────────────────────────────
     # 每次 LLM 请求前检索记忆并追加到 system prompt。目标由插件构造：
     # scope=self 只搜当前说话人；scope=all 还搜本应用空间内所有用户。
     "memory_injection_enabled": False,
-    "memory_injection_scope": "self",       # self / all
+    "memory_injection_scope": "self",  # self / all
     "memory_injection_top_k": 5,
     "memory_injection_timeout": 6.0,
     "memory_injection_max_chars": 1500,
@@ -92,7 +101,7 @@ class ConfigManager:
 
     def get_app_id_for(self, persona_name: str | None) -> str:
         """获取指定人格应使用的 app_id。
-        
+
         在隔离白名单中的人格 → 使用独立的 app_id（默认 app_id + 人格名）
         不在白名单中的人格  → 使用全局默认 app_id
         """

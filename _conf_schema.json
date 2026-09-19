@@ -81,6 +81,12 @@
     "type": "string",
     "default": "all"
   },
+  "auto_capture_per_user": {
+    "description": "按人隔离会话",
+    "hint": "开启后，同一个群里每个人与机器人的对话分别缓冲和提炼，记忆归属到各自名下；关闭则整个群共用一个会话，多人发言会混在一起。",
+    "type": "bool",
+    "default": true
+  },
   "auto_capture_sessions": {
     "description": "会话白名单（可选）",
     "hint": "逗号分隔的 unified_msg_origin；留空=不限制",
@@ -99,11 +105,23 @@
     "type": "int",
     "default": 80
   },
+  "auto_capture_min_turns": {
+    "description": "最少成篇轮数",
+    "hint": "空闲提炼前，单会话至少要有这么多轮用户发言（1 轮=1 条用户消息，机器人回复不计）。达到就提炼；空闲超过「空闲自动提炼秒数」仍不足，则直接丢弃这些消息，不再留在待提炼里。0=不限制。",
+    "type": "int",
+    "default": 1
+  },
   "auto_capture_min_chars": {
     "description": "最短捕获长度",
     "hint": "短于该长度的用户消息跳过",
     "type": "int",
     "default": 2
+  },
+  "assistant_display_name": {
+    "description": "机器人记忆名称",
+    "hint": "写入记忆时给机器人发言的标注名。留空=自动使用当前人格名，仍无法解析时用「我」。改账号也不会改变记忆里的自称；仅影响之后的新记忆。",
+    "type": "string",
+    "default": ""
   },
   "memory_injection_enabled": {
     "description": "记忆自动注入（RAG）",

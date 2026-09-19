@@ -15,19 +15,25 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from pathlib import Path
 from typing import Any
+
+from quart import jsonify, request
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.event.filter import PermissionType, permission_type
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
-from quart import jsonify, request
 
 from .core.auto_capture import AutoCapture
 from .core.config_manager import ConfigManager
 from .core.everos_client import EverOSClient
+from .core.memory_injection import (
+    MARKER,
+    build_block,
+    discover_user_targets,
+    fetch_memories,
+)
 from .core.memory_reader import (
     count_by_type,
     fetch_all,
@@ -35,12 +41,6 @@ from .core.memory_reader import (
     flush_session,
     list_buffered_messages,
     list_buffered_sessions,
-)
-from .core.memory_injection import (
-    MARKER,
-    build_block,
-    discover_user_targets,
-    fetch_memories,
 )
 from .core.memory_reader import search as read_search
 from .core.standalone_server import StandaloneServer
@@ -62,7 +62,9 @@ def _normalize_item(item: dict, mtype: str = "episode") -> dict:
         elif "profile_data" in item:
             pd = item["profile_data"]
             if isinstance(pd, dict):
-                item["content"] = pd.get("summary", json.dumps(pd, ensure_ascii=False)[:200])
+                item["content"] = pd.get(
+                    "summary", json.dumps(pd, ensure_ascii=False)[:200]
+                )
             else:
                 item["content"] = str(pd)[:200]
         else:
@@ -178,14 +180,16 @@ class EverOSIntegrationPlugin(Star):
             except Exception as e:
                 stats = {"error": str(e)}
 
-        return jsonify({
-            "healthy": healthy,
-            "latency": latency,
-            "base_url": self.config.everos_base_url,
-            "app_id": self.config.app_id,
-            "project_id": self.config.project_id,
-            "stats": stats,
-        })
+        return jsonify(
+            {
+                "healthy": healthy,
+                "latency": latency,
+                "base_url": self.config.everos_base_url,
+                "app_id": self.config.app_id,
+                "project_id": self.config.project_id,
+                "stats": stats,
+            }
+        )
 
     async def api_memories(self):
         """GET /api/plug/everos_integration/memories
@@ -193,7 +197,9 @@ class EverOSIntegrationPlugin(Star):
         获取最近记忆（从所有类型中取最新 10 条）。
         """
         if self._client is None:
-            return jsonify({"ok": False, "error": "client not initialized", "data": {"items": []}})
+            return jsonify(
+                {"ok": False, "error": "client not initialized", "data": {"items": []}}
+            )
 
         try:
             items = await fetch_all(
@@ -213,7 +219,10 @@ class EverOSIntegrationPlugin(Star):
                 if isinstance(ts, str):
                     try:
                         from datetime import datetime
-                        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+
+                        return datetime.fromisoformat(
+                            ts.replace("Z", "+00:00")
+                        ).timestamp()
                     except Exception:
                         return 0
                 return ts
@@ -243,12 +252,14 @@ class EverOSIntegrationPlugin(Star):
             ts = int(time.time() * 1000)
             await self._client.memory_add(
                 session_id=f"webui-test-{ts}",
-                messages=[{
-                    "sender_id": user_id,
-                    "role": "user",
-                    "timestamp": ts,
-                    "content": content,
-                }],
+                messages=[
+                    {
+                        "sender_id": user_id,
+                        "role": "user",
+                        "timestamp": ts,
+                        "content": content,
+                    }
+                ],
                 app_id=self.config.app_id,
                 project_id=self.config.project_id,
             )
@@ -284,12 +295,14 @@ class EverOSIntegrationPlugin(Star):
         try:
             await self._client.memory_add(
                 session_id=f"webui-{user_id}-{ts}",
-                messages=[{
-                    "sender_id": user_id,
-                    "role": "user",
-                    "timestamp": ts,
-                    "content": content,
-                }],
+                messages=[
+                    {
+                        "sender_id": user_id,
+                        "role": "user",
+                        "timestamp": ts,
+                        "content": content,
+                    }
+                ],
                 app_id=self.config.app_id,
                 project_id=self.config.project_id,
             )
@@ -308,7 +321,9 @@ class EverOSIntegrationPlugin(Star):
         按类型获取记忆列表。
         """
         if self._client is None:
-            return jsonify({"ok": False, "error": "client not initialized", "data": {"items": []}})
+            return jsonify(
+                {"ok": False, "error": "client not initialized", "data": {"items": []}}
+            )
 
         try:
             body = await request.get_json()
@@ -325,9 +340,7 @@ class EverOSIntegrationPlugin(Star):
                 app_id=self.config.app_id,
                 project_id=self.config.project_id,
             )
-            all_items = [
-                _normalize_item(dict(item), memory_type) for item in items
-            ]
+            all_items = [_normalize_item(dict(item), memory_type) for item in items]
             return jsonify({"ok": True, "data": {"items": all_items}})
         except Exception as e:
             return jsonify({"ok": False, "error": str(e), "data": {"items": []}})
@@ -338,7 +351,9 @@ class EverOSIntegrationPlugin(Star):
         语义检索记忆。
         """
         if self._client is None:
-            return jsonify({"ok": False, "error": "client not initialized", "results": []})
+            return jsonify(
+                {"ok": False, "error": "client not initialized", "results": []}
+            )
 
         try:
             body = await request.get_json()
@@ -371,11 +386,13 @@ class EverOSIntegrationPlugin(Star):
     async def api_pending(self):
         """GET /api/plug/everos_integration/pending"""
         if self._client is None:
-            return jsonify({
-                "ok": False,
-                "error": "client not initialized",
-                "data": {"sessions": [], "messages": []},
-            })
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "client not initialized",
+                    "data": {"sessions": [], "messages": []},
+                }
+            )
         try:
             sessions = list_buffered_sessions(
                 self.config.everos_data_dir, app_id=self.config.app_id
@@ -383,16 +400,20 @@ class EverOSIntegrationPlugin(Star):
             messages = list_buffered_messages(
                 self.config.everos_data_dir, app_id=self.config.app_id
             )
-            return jsonify({
-                "ok": True,
-                "data": {"sessions": sessions, "messages": messages},
-            })
+            return jsonify(
+                {
+                    "ok": True,
+                    "data": {"sessions": sessions, "messages": messages},
+                }
+            )
         except Exception as e:
-            return jsonify({
-                "ok": False,
-                "error": str(e),
-                "data": {"sessions": [], "messages": []},
-            })
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": str(e),
+                    "data": {"sessions": [], "messages": []},
+                }
+            )
 
     async def api_flush(self):
         """POST /api/plug/everos_integration/flush"""
@@ -413,12 +434,14 @@ class EverOSIntegrationPlugin(Star):
                     app_id=self.config.app_id,
                     project_id=self.config.project_id,
                 )
-                return jsonify({
-                    "ok": True,
-                    "status": status,
-                    "flushed": 1,
-                    "message": f"会话 {session_id} → {status}",
-                })
+                return jsonify(
+                    {
+                        "ok": True,
+                        "status": status,
+                        "flushed": 1,
+                        "message": f"会话 {session_id} → {status}",
+                    }
+                )
             results = await flush_buffered(
                 self.config.everos_base_url,
                 self.config.everos_data_dir,
@@ -426,19 +449,23 @@ class EverOSIntegrationPlugin(Star):
                 project_id=self.config.project_id,
             )
             if not results:
-                return jsonify({
+                return jsonify(
+                    {
+                        "ok": True,
+                        "status": "no_pending",
+                        "flushed": 0,
+                        "message": "缓冲区为空：当前没有待提炼的消息",
+                    }
+                )
+            return jsonify(
+                {
                     "ok": True,
-                    "status": "no_pending",
-                    "flushed": 0,
-                    "message": "缓冲区为空：当前没有待提炼的消息",
-                })
-            return jsonify({
-                "ok": True,
-                "status": "ok",
-                "flushed": len(results),
-                "sessions": results,
-                "message": f"已提炼 {len(results)} 个会话",
-            })
+                    "status": "ok",
+                    "flushed": len(results),
+                    "sessions": results,
+                    "message": f"已提炼 {len(results)} 个会话",
+                }
+            )
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)})
 
@@ -499,7 +526,9 @@ class EverOSIntegrationPlugin(Star):
         try:
             self.context.add_llm_tools(*tools)
             self._tools_registered = True
-            logger.info("🔧 LLM 工具已注册: everos_learn, everos_memorize, everos_recall")
+            logger.info(
+                "🔧 LLM 工具已注册: everos_learn, everos_memorize, everos_recall"
+            )
         except Exception as e:
             logger.error(f"LLM 工具注册失败: {e}", exc_info=True)
 
@@ -545,7 +574,10 @@ class EverOSIntegrationPlugin(Star):
                 return
             base = getattr(req, "system_prompt", "") or ""
             req.system_prompt = (base + "\n" + block) if base else block
-            logger.debug(f"[EverOS] memory injection: {len(items)} for {sender_id}")
+            logger.info(
+                f"[EverOS] 已注入长期记忆 {len(items)} 条 (user_id={sender_id}): "
+                + block.replace("\n", " | ")
+            )
         except Exception as e:
             logger.debug(f"[EverOS] memory injection skipped: {e}")
 
@@ -562,8 +594,38 @@ class EverOSIntegrationPlugin(Star):
         """
         if self._auto_capture is None:
             return
+        # Resolve the bot's self name so memories never label it by account id.
+        assistant_name = str(
+            self.config.get("assistant_display_name", "") or ""
+        ).strip()
+        if not assistant_name:
+            try:
+                req = event.get_extra("provider_request")
+                cfg = self.context.get_config(umo=event.unified_msg_origin).get(
+                    "provider_settings", {}
+                )
+                (
+                    _,
+                    persona,
+                    _,
+                    _,
+                ) = await self.context.persona_manager.resolve_selected_persona(
+                    umo=event.unified_msg_origin,
+                    conversation_persona_id=getattr(
+                        getattr(req, "conversation", None), "persona_id", None
+                    ),
+                    platform_name=event.get_platform_name(),
+                    provider_settings=cfg,
+                )
+                name = str((persona or {}).get("name") or "").strip()
+                if name and name != "default":
+                    assistant_name = name
+            except Exception as e:
+                logger.debug(f"[EverOS] resolve assistant name failed: {e}")
         try:
-            await self._auto_capture.record_turn(event, response)
+            await self._auto_capture.record_turn(
+                event, response, assistant_name=assistant_name
+            )
         except Exception as e:
             logger.debug(f"[EverOS] auto-capture skipped: {e}")
 
@@ -595,9 +657,7 @@ class EverOSIntegrationPlugin(Star):
 
     @permission_type(PermissionType.ADMIN)
     @everos.command("memorize")
-    async def cmd_everos_memorize(
-        self, event: AstrMessageEvent, content: str
-    ):
+    async def cmd_everos_memorize(self, event: AstrMessageEvent, content: str):
         """/everos memorize <内容> — 手动存储一条记忆到 User Track"""
         if not self._client:
             yield event.plain_result("❌ EverOS 客户端未初始化")
@@ -609,9 +669,7 @@ class EverOSIntegrationPlugin(Star):
 
     @permission_type(PermissionType.ADMIN)
     @everos.command("learn")
-    async def cmd_everos_learn(
-        self, event: AstrMessageEvent, content: str
-    ):
+    async def cmd_everos_learn(self, event: AstrMessageEvent, content: str):
         """/everos learn <内容> — 手动存储一条技能/规则到 Agent Track"""
         if not self._client:
             yield event.plain_result("❌ EverOS 客户端未初始化")
@@ -623,9 +681,7 @@ class EverOSIntegrationPlugin(Star):
 
     @permission_type(PermissionType.ADMIN)
     @everos.command("flush")
-    async def cmd_everos_flush(
-        self, event: AstrMessageEvent, session_id: str = ""
-    ):
+    async def cmd_everos_flush(self, event: AstrMessageEvent, session_id: str = ""):
         """/everos flush [会话ID] — 立即触发记忆提炼
 
         不带参数时自动发现缓冲区中所有待提炼的会话；带参数时只提炼该会话。
@@ -694,9 +750,7 @@ class EverOSIntegrationPlugin(Star):
 
     @permission_type(PermissionType.ADMIN)
     @everos.command("search")
-    async def cmd_everos_search(
-        self, event: AstrMessageEvent, query: str
-    ):
+    async def cmd_everos_search(self, event: AstrMessageEvent, query: str):
         """/everos search <关键词> — 搜索 EverOS 记忆"""
         if not self._client:
             yield event.plain_result("❌ EverOS 客户端未初始化")
@@ -708,9 +762,7 @@ class EverOSIntegrationPlugin(Star):
 
     @permission_type(PermissionType.ADMIN)
     @everos.command("remove")
-    async def cmd_everos_remove(
-        self, event: AstrMessageEvent, memory_id: str
-    ):
+    async def cmd_everos_remove(self, event: AstrMessageEvent, memory_id: str):
         """/everos remove <记忆ID> — 删除指定记忆"""
         if not self._client:
             yield event.plain_result("❌ EverOS 客户端未初始化")
@@ -718,16 +770,19 @@ class EverOSIntegrationPlugin(Star):
 
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=10) as c:
                 resp = await c.post(
-                    f"http://127.0.0.1:18766/api/everos/forget",
+                    "http://127.0.0.1:18766/api/everos/forget",
                     json={"id": memory_id, "memory_type": "episode"},
                 )
                 result = resp.json()
                 if result.get("ok"):
                     yield event.plain_result(f"✅ 已删除记忆: {memory_id}")
                 else:
-                    yield event.plain_result(f"❌ 删除失败: {result.get('error', '未知错误')}")
+                    yield event.plain_result(
+                        f"❌ 删除失败: {result.get('error', '未知错误')}"
+                    )
         except Exception as e:
             yield event.plain_result(f"❌ 删除失败: {e}")
 

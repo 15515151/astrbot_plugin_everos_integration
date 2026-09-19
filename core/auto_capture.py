@@ -4,8 +4,8 @@ Feeds each real conversation turn to EverOS /memory/add and lets EverOS's own
 boundary detection extract episodes. It deliberately does NOT flush after every
 add: flushing per turn makes every turn its own episode and defeats
 summarisation. A background loop flushes a session once it has been idle for
-idle_flush_seconds, or once it holds max_pending messages, so short or
-single-topic conversations still get extracted eventually.
+idle_flush_seconds, or once it holds max_pending messages. A session that goes
+idle while still below min_turns is discarded instead of lingering forever.
 
 This module only depends on httpx + stdlib; the EverOS package is not needed.
 """
@@ -20,7 +20,7 @@ from typing import Any
 
 import httpx
 
-from .memory_reader import flush_session, list_buffered_sessions
+from .memory_reader import discard_session, flush_session, list_buffered_sessions
 
 _ID_SAFE_RE = re.compile(r"[^a-zA-Z0-9_.@+-]")
 
@@ -118,8 +118,17 @@ class AutoCapture:
 
     # -- capture -----------------------------------------------------
 
-    async def record_turn(self, event: Any, response: Any) -> None:
-        """Feed one conversation turn; returns immediately (fire-and-forget)."""
+    async def record_turn(
+        self, event: Any, response: Any, assistant_name: str = ""
+    ) -> None:
+        """Feed one conversation turn; returns immediately (fire-and-forget).
+
+        Args:
+            event: The AstrBot message event that triggered the LLM request.
+            response: The LLM response object (or None).
+            assistant_name: Display name for the bot's own message. Falls back
+                to the assistant_display_name config and finally to "我".
+        """
         if not self.enabled or self._client is None:
             return
         if not self._scope_matches(event):
@@ -137,26 +146,48 @@ class AutoCapture:
         if user_text.startswith("/") or user_text.startswith("／"):
             return
 
-        session_id = sanitize_id(
+        base_session = sanitize_id(
             event.unified_msg_origin or event.get_session_id() or "session"
         )
-        if not self._session_allowed(session_id):
+        if not self._session_allowed(base_session):
             return
 
         sender_id = event.get_sender_id() or event.get_sender_name() or "unknown"
+        # A group shares one unified_msg_origin, so without the sender suffix
+        # every member's turns land in the same buffer and get summarised
+        # together. Append the sender to keep each person's memory separate.
+        if bool(self.config.get("auto_capture_per_user", True)):
+            session_id = sanitize_id(f"{base_session}__{sender_id}")
+        else:
+            session_id = base_session
         ts = int(time.time() * 1000)
         messages = [
-            {"sender_id": sender_id, "role": "user", "timestamp": ts,
-             "content": user_text}
+            {
+                "sender_id": sender_id,
+                "role": "user",
+                "timestamp": ts,
+                "content": user_text,
+            }
         ]
         mode = str(self.config.get("auto_capture_mode", "both")).lower()
         if mode != "user" and reply_text:
-            messages.append({
-                "sender_id": event.get_self_id() or "assistant",
-                "role": "assistant",
-                "timestamp": ts + 1,
-                "content": reply_text,
-            })
+            # Keep the real account id in sender_id for stable attribution,
+            # but label the message with a readable self name so summaries
+            # never address the bot by its platform account id.
+            self_name = (
+                str(assistant_name or "").strip()
+                or str(self.config.get("assistant_display_name", "") or "").strip()
+                or "我"
+            )
+            messages.append(
+                {
+                    "sender_id": event.get_self_id() or "assistant",
+                    "sender_name": self_name,
+                    "role": "assistant",
+                    "timestamp": ts + 1,
+                    "content": reply_text,
+                }
+            )
 
         payload = {
             "session_id": session_id,
@@ -192,24 +223,43 @@ class AutoCapture:
                 self.log.warning(f"[EverOS] auto-capture maintenance error: {exc}")
 
     async def flush_due(self) -> list[dict[str, Any]]:
-        """Flush sessions that are idle or over the pending cap. Returns them."""
+        """Flush idle/capped sessions and drop ones that stayed too short.
+
+        A session with at least auto_capture_min_turns user turns is extracted
+        once it goes idle (or hits the pending cap). A session that goes idle
+        while still below that threshold is discarded, so a lone exchange
+        neither becomes a memory nor lingers in the pending buffer.
+        """
         if not self.enabled:
             return []
         idle = float(self.config.get("auto_capture_idle_flush_seconds", 300) or 0)
         max_pending = int(self.config.get("auto_capture_max_pending", 80) or 0)
-        sessions = list_buffered_sessions(
-            self.config.get("everos_data_dir", ""),
-            app_id=self.config.get("app_id", "astrbot"),
-        )
+        min_turns = int(self.config.get("auto_capture_min_turns", 1) or 0)
+        data_dir = self.config.get("everos_data_dir", "")
+        app_id = self.config.get("app_id", "astrbot")
+        sessions = list_buffered_sessions(data_dir, app_id=app_id)
         flushed: list[dict[str, Any]] = []
         for session in sessions:
             pending = int(session.get("pending") or 0)
+            turns = int(session.get("user_pending") or 0)
             age = _age_seconds(session.get("last_updated"))
-            due = (max_pending > 0 and pending >= max_pending) or (
-                idle > 0 and age >= idle
-            )
-            if not due:
-                continue
+            over_cap = max_pending > 0 and pending >= max_pending
+            if not over_cap:
+                if idle <= 0 or age < idle:
+                    continue
+                if min_turns > 0 and turns < min_turns:
+                    removed = discard_session(
+                        data_dir,
+                        session["session_id"],
+                        app_id=session["app_id"],
+                        project_id=session["project_id"],
+                    )
+                    self.log.info(
+                        f"[EverOS] auto-discard session={session['session_id']} "
+                        f"pending={pending} turns={turns} age={int(age)}s "
+                        f"(< min_turns={min_turns}) removed={removed}"
+                    )
+                    continue
             status = await flush_session(
                 self._base_url,
                 session["session_id"],
@@ -219,6 +269,6 @@ class AutoCapture:
             flushed.append({**session, "status": status})
             self.log.info(
                 f"[EverOS] auto-flush session={session['session_id']} "
-                f"pending={pending} age={int(age)}s status={status}"
+                f"pending={pending} turns={turns} age={int(age)}s status={status}"
             )
         return flushed

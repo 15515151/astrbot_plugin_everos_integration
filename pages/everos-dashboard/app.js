@@ -85,6 +85,12 @@ function escape(text) {
     .replace(/'/g, '&#39;');
 }
 
+// 截断文本：超出时以 ... 结尾，提示内容尚未显示完整
+function truncate(text, max) {
+  const s = String(text || '');
+  return s.length > max ? s.slice(0, max) + '...' : s;
+}
+
 function toast(msg, type = '') {
   const el = $('toast');
   el.textContent = msg;
@@ -251,7 +257,7 @@ async function loadActivity() {
     const show = items.slice(0, 8);
     el.innerHTML = show.map((m, i) => {
       const type = m.memory_type || m.type || 'memory';
-      const content = (m.content || m.text || '').slice(0, 120);
+      const content = truncate(m.content || m.text || '', 120);
       return `
         <div class="activity-item" style="animation-delay:${i * 60}ms">
           <div class="activity-item__dot"></div>
@@ -332,21 +338,44 @@ function renderPage() {
   pageItems.forEach(function(m, i) {
     var t = m.memory_type || m.type || 'memory';
     var content = (m.content || m.text || JSON.stringify(m));
-    var preview = content.slice(0, 150);
+    var preview = truncate(content, 150);
+    var truncated = content.length > 150;
     var div = document.createElement('div');
     div.className = 'mem-item';
     div.style.animationDelay = (i * 40) + 'ms';
-    div.innerHTML =
-      '<div class="mem-item__main">' +
-        '<div class="mem-item__head">' +
-          '<span class="mem-item__type ' + escape(t) + '">' + escape(t) + '</span>' +
-          '<span class="mem-item__time">' + fmtTime(m.timestamp || m.created_at) + '</span>' +
-        '</div>' +
-        '<div class="mem-item__content">' + escape(preview) + '</div>' +
-      '</div>';
-    div.addEventListener('click', function() {
-      window.showMemoryDetail(t, content, fmtTime(m.timestamp || m.created_at));
-    });
+
+    var main = document.createElement('div');
+    main.className = 'mem-item__main';
+
+    var head = document.createElement('div');
+    head.className = 'mem-item__head';
+    head.innerHTML =
+      '<span class="mem-item__type ' + escape(t) + '">' + escape(t) + '</span>' +
+      '<span class="mem-item__time">' + fmtTime(m.timestamp || m.created_at) + '</span>';
+
+    var contentEl = document.createElement('div');
+    contentEl.className = 'mem-item__content';
+    contentEl.textContent = preview;
+
+    main.appendChild(head);
+    main.appendChild(contentEl);
+
+    if (truncated) {
+      var expanded = false;
+      var toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'expand-toggle';
+      toggle.textContent = '展开';
+      toggle.addEventListener('click', function() {
+        expanded = !expanded;
+        contentEl.textContent = expanded ? content : preview;
+        toggle.textContent = expanded ? '收起' : '展开';
+        div.classList.toggle('expanded', expanded);
+      });
+      main.appendChild(toggle);
+    }
+
+    div.appendChild(main);
     el.appendChild(div);
   });
 
@@ -555,7 +584,9 @@ async function doSearch() {
     }
     el.innerHTML = items.map((m, i) => {
       const t = m.memory_type || m.type || 'memory';
-      const content = (m.content || m.text || '').slice(0, 200);
+      const full = m.content || m.text || '';
+      const content = truncate(full, 200);
+      const truncated = full.length > 200;
       const score = m.score || m.relevance || 0;
       const scorePct = typeof score === 'number' ? Math.round(score * 100) : 0;
       return `
@@ -568,8 +599,22 @@ async function doSearch() {
             </span>
           </div>
           <div class="search-item__content">${escape(content)}</div>
+          ${truncated ? `<button type="button" class="expand-toggle" data-idx="${i}">展开</button>` : ''}
         </div>`;
     }).join('');
+
+    el.querySelectorAll('.expand-toggle').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const i = parseInt(this.dataset.idx, 10);
+        const item = this.closest('.search-item');
+        const contentEl = item.querySelector('.search-item__content');
+        const full = items[i].content || items[i].text || '';
+        const isExpanded = this.dataset.expanded === '1';
+        contentEl.textContent = isExpanded ? truncate(full, 200) : full;
+        this.dataset.expanded = isExpanded ? '0' : '1';
+        this.textContent = isExpanded ? '展开' : '收起';
+      });
+    });
   } catch (e) {
     el.innerHTML = `<p class="empty-state">检索失败: ${escape(e.message)}</p>`;
   }
@@ -593,7 +638,7 @@ async function loadSkills() {
     }
     el.innerHTML = items.map(m => {
       const name = m.name || (m.content || '').split('\n')[0] || '未命名技能';
-      const desc = (m.description || m.content || '').slice(0, 120);
+      const desc = truncate(m.description || m.content || '', 120);
       const icon = ['⚡', '🔧', '🧠', '🛠', '📐', '🎯'][Math.floor(Math.random() * 6)];
       return `
         <div class="skill-card">
@@ -807,34 +852,6 @@ function setupTabs() {
     });
   });
 }
-
-// ═══ 记忆缓存（供 onclick 查找完整内容）────────────────────
-
-window._memCache = [];
-
-window.showDetailFromCache = function(idx, type, time) {
-  const content = window._memCache[idx] || '';
-  window.showMemoryDetail(type, content, time);
-};
-
-window.showMemoryDetail = function(type, content, time) {
-  const old = document.querySelector('.detail-panel');
-  if (old) old.remove();
-
-  const panel = document.createElement('div');
-  panel.className = 'detail-panel';
-  panel.innerHTML =
-    '<div class="detail-panel__backdrop" onclick="this.parentElement.remove()"></div>' +
-    '<div class="detail-panel__card">' +
-      '<div class="detail-panel__head">' +
-        '<span class="mem-item__type ' + escape(type) + '">' + escape(type) + '</span>' +
-        '<span>' + time + '</span>' +
-        '<button class="btn btn--icon btn--sm" onclick="this.closest(\'.detail-panel\').remove()">✕</button>' +
-      '</div>' +
-      '<div class="detail-panel__body">' + escape(content) + '</div>' +
-    '</div>';
-  document.body.appendChild(panel);
-};
 
 // ═══ 启动 ──────────────────────────────────────────────────────
 

@@ -263,7 +263,7 @@ async def count_by_type(
     """Count rows per memory type without downloading them all."""
     owners = _resolve_owners(data_dir, app_id, project_id)
     base_url = base_url.rstrip("/")
-    counts: dict[str, int] = {mtype: 0 for mtype in ALL_TYPES}
+    counts: dict[str, int] = dict.fromkeys(ALL_TYPES, 0)
 
     async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
         for mtype in ALL_TYPES:
@@ -353,9 +353,11 @@ def list_buffered_sessions(
     is missing or unreadable.
 
     Each item is
-    {app_id, project_id, session_id, pending, last_updated}.
-    last_updated is the newest row timestamp (UTC) for that session, used by
-    the auto-capture loop to decide when a session has gone idle.
+    {app_id, project_id, session_id, pending, user_pending, last_updated}.
+    pending counts every buffered message; user_pending counts only
+    role="user" rows, i.e. completed conversation turns. last_updated is the
+    newest row timestamp (UTC) for that session, used by the auto-capture
+    loop to decide when a session has gone idle.
     """
     if not data_dir:
         return []
@@ -368,7 +370,8 @@ def list_buffered_sessions(
         return []
     try:
         rows = con.execute(
-            "SELECT app_id, project_id, session_id, COUNT(*), MAX(updated_at) "
+            "SELECT app_id, project_id, session_id, COUNT(*), "
+            "SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END), MAX(updated_at) "
             "FROM unprocessed_buffer "
             "GROUP BY app_id, project_id, session_id"
         ).fetchall()
@@ -378,12 +381,10 @@ def list_buffered_sessions(
         con.close()
 
     out: list[dict[str, Any]] = []
-    for db_app, db_project, session_id, pending, last_updated in rows:
+    for db_app, db_project, session_id, pending, user_pending, last_updated in rows:
         # Same app-space filter used for reads: the configured app_id plus
         # its isolation-persona variants.
-        if app_id and not (
-            db_app == app_id or str(db_app).startswith(f"{app_id}_")
-        ):
+        if app_id and not (db_app == app_id or str(db_app).startswith(f"{app_id}_")):
             continue
         out.append(
             {
@@ -391,6 +392,7 @@ def list_buffered_sessions(
                 "project_id": db_project,
                 "session_id": session_id,
                 "pending": int(pending),
+                "user_pending": int(user_pending or 0),
                 "last_updated": _iso_utc(last_updated),
             }
         )
@@ -432,9 +434,7 @@ def list_buffered_messages(
 
     out: list[dict[str, Any]] = []
     for db_app, db_project, session_id, role, sender_id, timestamp, text in rows:
-        if app_id and not (
-            db_app == app_id or str(db_app).startswith(f"{app_id}_")
-        ):
+        if app_id and not (db_app == app_id or str(db_app).startswith(f"{app_id}_")):
             continue
         out.append(
             {
@@ -448,6 +448,45 @@ def list_buffered_messages(
             }
         )
     return out
+
+
+def discard_session(
+    data_dir: str | None,
+    session_id: str,
+    *,
+    app_id: str = "astrbot",
+    project_id: str = "default",
+) -> int:
+    """Drop one session's buffered messages without extracting them.
+
+    The auto-capture loop uses this to abandon a conversation that went
+    idle before it held enough turns to be worth remembering, so it does
+    not linger forever in the pending view. Returns the deleted row count.
+
+    Writes to the same system SQLite EverOS uses; a short busy timeout plus
+    graceful failure keeps a concurrent EverOS write from breaking capture.
+    """
+    if not data_dir:
+        return 0
+    db_path = Path(data_dir).expanduser() / ".index" / "sqlite" / "system.db"
+    if not db_path.is_file():
+        return 0
+    try:
+        con = sqlite3.connect(db_path, timeout=5.0)
+    except sqlite3.Error:
+        return 0
+    try:
+        cur = con.execute(
+            "DELETE FROM unprocessed_buffer "
+            "WHERE app_id=? AND project_id=? AND session_id=?",
+            (app_id, project_id, session_id),
+        )
+        con.commit()
+        return cur.rowcount or 0
+    except sqlite3.Error:
+        return 0
+    finally:
+        con.close()
 
 
 async def flush_session(
